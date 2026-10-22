@@ -206,3 +206,8 @@ button.second { margin-top: 8px; }
   display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 10px; }
 .confidential strong { color: #ff6fb5; letter-spacing: 0.04em; text-transform: uppercase; font-size: 12px; }
 @media print { .confidential { background: none; color: #000; border-bottom: 1px solid #000; } .confidential strong { color: #000; } }
+
+/* connect team log (folder edition) */
+.connect-team { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 12px; border-radius: 8px; background: var(--pink-soft); }
+.connect-team p { margin: 0; font-size: 14px; }
+.connect-team .hint { margin: 0; font-size: 12px; }

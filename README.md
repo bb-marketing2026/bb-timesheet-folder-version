@@ -1,8 +1,8 @@
 > **Strictly private & confidential.** Internal Brainbox use only. Do not forward, publish or distribute outside the group.
 
-# Brainbox Timesheet Tracker (folder edition)
+# Brainbox Timesheet Tracker (local edition)
 
-A start/end timer that writes client hours into Brainbox timesheets (.xlsx) kept in a folder on your computer or in a OneDrive or SharePoint folder synced to it. Several people can track time for the same client, and a Team log shows everyone's work so it can be added to the timesheet. Built with React 18, Vite 5, ExcelJS (reading) and JSZip (saving). No server or database.
+A start/end timer that writes client hours into Brainbox timesheets (.xlsx) saved on your computer or in a OneDrive or SharePoint folder synced to it. Several people can track time for the same client, and a Team log shows everyone's work so it can be added to the timesheet. Built with React 18, Vite 5, ExcelJS (reading) and JSZip (saving). No server or database.
 
 There is a separate Microsoft 365 edition, which saves directly through SharePoint and handles people saving at the same moment more strongly. See its own README.
 
@@ -10,7 +10,8 @@ There is a separate Microsoft 365 edition, which saves directly through SharePoi
 
 | Panel or field | What it does |
 |---|---|
-| Open timesheet | Choose the folder that holds the client timesheet. If it has several .xlsx files, pick one. Recent clients are remembered. |
+| Open timesheet | Choose the client timesheet file (.xlsx). The app saves straight back into it. Recent clients are remembered. |
+| Connect team log | Optional, once per timesheet, in the Team log panel. The folder picker opens where the timesheet is saved; click **Select folder**. The app checks it is the right folder, then keeps the team log next to the file. |
 | Your name (under the title) | Type your name and click **Save**. There is no default. Colleagues see it next to your entries in the Team log after they press **Refresh**. It is never written into the timesheet. Click **Change** to update it. Your existing log keeps working under the new name. |
 | Activity tag / Activity | Written to **Project Description** and **Activities**. Tags are suggested from the file. |
 | Start / End | The timer. It survives a refresh or closed tab. |
@@ -47,7 +48,7 @@ Each person writes only their own log, so logs never clash. A log is named after
 
 ## Recommended way of working when several people share a client
 
-1. Everyone keeps the client folder synced with OneDrive and opens it in the app.
+1. Everyone keeps the client folder synced with OneDrive, opens the timesheet in the app and clicks **Connect team log** once.
 2. Each person tracks their sessions and clicks **Add hours to the file** when done.
 3. Before adding, and whenever "Refresh: new updates" flashes, click **Refresh**.
 4. If a save fails, the work is already in that person's log as "Not added yet". Add it from the Team log later.
@@ -87,14 +88,15 @@ Open http://localhost:5173 in Chrome or Edge.
 | Install Command | `npm install` |
 | Environment Variables | None |
 
-4. Click **Deploy**. Share the link with the team. Each person uses it with their own folder access.
+4. Click **Deploy**. Share the link with the team. Each person uses it with their own copy of the timesheet file.
 
 ## Known issues and limits
 
 - **Chrome or Edge only for the full app.** Firefox and Safari can open one file and download updated copies, with no team log.
 - **OneDrive sync delay.** Each computer saves its own copy and OneDrive takes seconds to minutes to sync. Two saves to the same timesheet inside that gap can still produce a conflict copy. The app warns when it sees one, and the Team log "Check" status shows rows that went missing. The Microsoft 365 edition removes this risk.
 - **Close the timesheet in Excel before saving from the app.** Windows locks open files.
-- **Permission prompt.** Chrome asks to allow editing of the folder once per browser session.
+- **Permission prompt.** Chrome asks to allow editing of the timesheet (and its folder, if the team log is connected) once per browser session.
+- **Without Connect team log**, the timesheet works fully, but the Team log, conflict copy warnings and Excel-open warnings are off.
 - **Inserting rows is refused** on sheets with tables, charts, images, comments or pivot tables. Do that in Excel.
 - **Timers, pending sessions, recent clients and undo copies** stay in each person's browser.
 
@@ -114,5 +116,5 @@ npm test -- "path/to/Brainbox - Timesheet - RAWCS.xlsx"
 | `src/core/xlsxPatch.js` | Cell-level add (in date order), delete and insert rows, with checks |
 | `src/core/team.js` | Team log format and statuses |
 | `src/core/util.js` | Australian dates (Perth time), file names, downloads |
-| `src/store/local.js` | Folder access, logs, change checks, conflict copy warnings |
+| `src/store/local.js` | File access, optional folder access for the team log, change checks, conflict copy warnings |
 | `src/store/idb.js` | Recent clients and undo history in the browser |

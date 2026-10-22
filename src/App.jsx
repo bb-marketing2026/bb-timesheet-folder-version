@@ -36,7 +36,6 @@ export default function App() {
   const [source, setSource] = useState(null); // where the timesheet lives (see store/)
   const [file, setFile] = useState(null); // { bytes, info, sheet }
   const [recent, setRecent] = useState([]);
-  const [folder, setFolder] = useState(null); // local: { dir, files } while choosing a timesheet
   const [account, setAccount] = useState(() => store.getAccount());
   const [link, setLink] = useState('');
   const [me, setMeState] = useState(() => store.getMe());
@@ -190,15 +189,24 @@ export default function App() {
   }, [source, checked]);
 
   // ---------- opening (local) ----------
-  async function chooseFolder() {
+  async function chooseFile() {
     setStatus(null);
-    if (!store.canUseFolders) { inputRef.current?.click(); return; }
+    if (!store.canSaveInPlace) { inputRef.current?.click(); return; }
     try {
-      const dir = await store.pickFolder();
-      const files = await store.listTimesheets(dir);
-      if (!files.length) { flash('error', `No Excel files found in "${dir.name}". Choose the folder that holds the client timesheet.`); return; }
-      if (files.length === 1) await connect(await store.openFromFolder(dir, files[0]));
-      else setFolder({ dir, files });
+      const handle = await store.pickFile();
+      const src = await store.openFile(handle);
+      await connect(src, src.needsFolder
+        ? `Opened ${src.name}. To share the team log with colleagues, click "Connect team log" in the Team log panel.`
+        : `Opened ${src.name}.`);
+    } catch (e) { if (e.name !== 'AbortError') flash('error', e.message); }
+  }
+
+  // Team log needs the folder that holds the timesheet (local edition).
+  async function connectTeamFolder() {
+    if (!source?.connectFolder) return;
+    try {
+      const next = await source.connectFolder();
+      await connect(next, 'Team log connected. Colleagues who open the same timesheet and connect its folder share this log.');
     } catch (e) { if (e.name !== 'AbortError') flash('error', e.message); }
   }
 
@@ -422,11 +430,13 @@ export default function App() {
       if (source?.createSibling) {
         const src = await source.createSibling(name, bytes);
         setShowNew(false);
-        await connect(src, `Created ${name} next to ${source.name}.`);
+        if (src) await connect(src, `Created and opened ${src.name}.`);
+        else flash('ok', `Downloaded ${name}. Open it to start tracking.`);
       } else {
         const saved = await saveBytesAs(bytes, name);
         setShowNew(false);
-        flash('ok', `Saved ${saved.name}. ${store.kind === 'local' ? 'Open its folder to start tracking.' : 'Upload it to SharePoint, copy its link and open it here.'}`);
+        if (saved.handle && store.openFile) await connect(await store.openFile(saved.handle), `Created and opened ${saved.name}.`);
+        else flash('ok', `Saved ${saved.name}. ${store.kind === 'local' ? 'Open it to start tracking.' : 'Upload it to SharePoint, copy its link and open it here.'}`);
       }
     } catch (e) { if (e.name !== 'AbortError') flash('error', e.message); }
   }
@@ -519,20 +529,11 @@ export default function App() {
               <h2>Timesheet file</h2>
               <div className="row gap">
                 <button className="ghost" onClick={() => setShowNew(true)} disabled={store.kind === 'm365' && !account}>New timesheet</button>
-                {store.kind === 'local' && <button onClick={chooseFolder} disabled={busy}>{source ? 'Change' : 'Open timesheet'}</button>}
+                {store.kind === 'local' && <button onClick={chooseFile} disabled={busy}>{source ? 'Change' : 'Open timesheet'}</button>}
               </div>
             </div>
             <input ref={inputRef} type="file" accept=".xlsx" hidden onChange={onFileInput} />
             {connectPanel}
-
-            {folder && (
-              <div className="pick">
-                <div className="label">Choose the timesheet in "{folder.dir.name}"</div>
-                {folder.files.map((n) => (
-                  <button key={n} className="ghost small pick-btn" onClick={async () => { const f = folder; setFolder(null); await connect(await store.openFromFolder(f.dir, n)); }}>{n}</button>
-                ))}
-              </div>
-            )}
 
             {file ? (
               <div className="file">
@@ -540,7 +541,7 @@ export default function App() {
                 <dl className="meta">
                   <dt>Client</dt><dd>{info.client || 'Not set'}</dd>
                   <dt>Project</dt><dd>{info.project || 'Not set'}</dd>
-                  <dt>Location</dt><dd>{source.where}</dd>
+                  {source.where && <><dt>Folder</dt><dd>{source.where}</dd></>}
                   <dt>Sheet</dt>
                   <dd>
                     {info.sheets.length > 1 ? (
@@ -599,10 +600,10 @@ export default function App() {
                 )}
               </div>
             ) : (
-              store.kind === 'local' && <p className="muted">Open the folder that holds a client timesheet (.xlsx). The app reads your activity tags from its Project Description column and keeps the team log beside it.</p>
+              store.kind === 'local' && <p className="muted">Open a client timesheet (.xlsx). The app reads your activity tags from its Project Description column and saves your hours straight into the file.</p>
             )}
 
-            {recent.length > 0 && (store.kind === 'local' ? store.canUseFolders : !!account) && (
+            {recent.length > 0 && (store.kind === 'local' ? store.canSaveInPlace : !!account) && (
               <div className="recent">
                 <div className="label">Recent clients</div>
                 <div className="chips">
@@ -617,14 +618,14 @@ export default function App() {
                 </div>
               </div>
             )}
-            {store.kind === 'local' && !store.canUseFolders && <p className="note">Tip: use Chrome or Edge to save straight into the file and share a team log.</p>}
+            {store.kind === 'local' && !store.canSaveInPlace && <p className="note">Tip: use Chrome or Edge to save straight into the file and share a team log.</p>}
           </div>
 
           <div className="card timer">
             <h2>Session</h2>
             <label className="field">
               <span>Activity tag</span>
-              <input list="tags" value={timer.tag} placeholder="e.g. RAWCS Content Hub" onChange={(e) => setTimer((t) => ({ ...t, tag: e.target.value }))} />
+              <input list="tags" value={timer.tag} placeholder="e.g. Content Planning" onChange={(e) => setTimer((t) => ({ ...t, tag: e.target.value }))} />
               <datalist id="tags">{tags.map((t) => <option key={t} value={t} />)}</datalist>
             </label>
             <label className="field">
@@ -704,8 +705,14 @@ export default function App() {
                   </button>
                 </div>
               </div>
-              {!team ? (
-                <p className="muted">{source.downloadMode ? 'The team log needs Chrome or Edge, with the timesheet folder open.' : 'Team log is not available for this file.'}</p>
+              {!team && source.needsFolder ? (
+                <div className="connect-team">
+                  <p>Share a team log with colleagues working on this timesheet. Allow access to the folder that holds <strong>{source.name}</strong>, so the app can keep the log next to it.</p>
+                  <button className="small" onClick={connectTeamFolder} disabled={busy}>Connect team log</button>
+                  <span className="hint">The folder picker opens where the timesheet is saved. Click "Select folder". You only do this once per timesheet.</span>
+                </div>
+              ) : !team ? (
+                <p className="muted">{source.downloadMode ? 'The team log needs Chrome or Edge.' : 'Team log is not available for this file.'}</p>
               ) : teamError ? (
                 <p className="warn-box">{teamError}</p>
               ) : (

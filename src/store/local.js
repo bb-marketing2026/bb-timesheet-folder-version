@@ -1,16 +1,17 @@
-// Local and OneDrive-synced folders (Chrome and Edge, File System Access API).
-// The app is given access to the folder that holds the client timesheet, so it can
-// read and write the timesheet, keep team logs in a "Timesheet Logs" subfolder,
-// and spot OneDrive conflict copies or a file that is open in Excel.
+// Timesheets on this computer or in a OneDrive-synced folder (Chrome and Edge, File System Access API).
+// You open the timesheet file itself and the app saves straight back into it.
+// For the team log, you can also connect the folder that holds the file (one click, the
+// folder picker opens in the right place). The app then keeps logs in a "Timesheet Logs"
+// subfolder and can spot OneDrive conflict copies or the file being open in Excel.
 // Other browsers fall back to opening a single file and downloading updated copies.
 import { fingerprint } from '../core/xlsxPatch.js';
 import { LOG_FOLDER, isLogFor, parseLog, emptyLog, serialiseLog, ownerOf, freeLogName } from '../core/team.js';
-import { StoreError, downloadBytes, saveBytesAs, uid, versionedName } from '../core/util.js';
+import { StoreError, downloadBytes, saveBytesAs, uid, versionedName, XLSX_TYPE } from '../core/util.js';
 import * as idb from './idb.js';
 
 export const kind = 'local';
-export const label = 'Folder on this computer or OneDrive';
-export const canUseFolders = typeof window !== 'undefined' && 'showDirectoryPicker' in window;
+export const label = 'File on this computer or OneDrive';
+export const canSaveInPlace = typeof window !== 'undefined' && 'showOpenFilePicker' in window && 'showDirectoryPicker' in window;
 // Microsoft 365 only.
 export const configured = true;
 export const signIn = null;
@@ -45,19 +46,10 @@ async function ensure(handle) {
   throw new StoreError('permission', 'Permission to edit files in this folder was not granted.');
 }
 
-export async function pickFolder() {
-  const dir = await window.showDirectoryPicker({ id: 'bb-timesheets', mode: 'readwrite' });
-  await ensure(dir);
-  return dir;
-}
-
-/** Excel files in the folder that could be timesheets (not lock files, backups or conflict copies). */
-export async function listTimesheets(dir) {
-  const names = [];
-  for await (const [name, h] of dir.entries()) {
-    if (h.kind === 'file' && /\.xlsx$/i.test(name) && !name.startsWith('~$') && !/ - Backup - v\d{8}/i.test(name)) names.push(name);
-  }
-  return names.sort((a, b) => a.localeCompare(b));
+export async function pickFile() {
+  const [handle] = await window.showOpenFilePicker({ id: 'bb-timesheets', types: [XLSX_TYPE], excludeAcceptAllOption: true });
+  await ensure(handle);
+  return handle;
 }
 
 async function readJsonFiles(logsDir, fileName) {
@@ -73,31 +65,49 @@ async function readJsonFiles(logsDir, fileName) {
 }
 
 export async function openRecent(rec) {
-  await ensure(rec.dir);
-  return openFromFolder(rec.dir, rec.fileName, rec.id);
+  if (rec.dir) {
+    // Folder access covers the file inside it, so one permission prompt is enough.
+    await ensure(rec.dir);
+    return openFile(await rec.dir.getFileHandle(rec.fileName), { dir: rec.dir, recentId: rec.id });
+  }
+  await ensure(rec.file);
+  return openFile(rec.file, { recentId: rec.id });
 }
 
-export async function openFromFolder(dir, fileName, recentId) {
-  await ensure(dir);
-  // One recent entry per folder and file.
+/**
+ * Open a timesheet from its file handle. `dir` (the folder holding the file) is optional:
+ * without it the timesheet works as normal and only the team log is unavailable.
+ */
+export async function openFile(fileHandle, { dir = null, recentId } = {}) {
+  await ensure(fileHandle);
+  const fileName = fileHandle.name;
+  // One recent entry per file.
   let id = recentId;
+  let rememberedDir = dir;
   if (!id) {
     for (const r of await idb.listRecent()) {
-      try { if (r.kind === 'local' && r.fileName === fileName && (await r.dir.isSameEntry(dir))) { id = r.id; break; } } catch { /* ignore */ }
+      try {
+        const same = r.kind === 'local' && (r.file ? await r.file.isSameEntry(fileHandle) : r.fileName === fileName && r.dir && (await r.dir.resolve(fileHandle))?.length === 1);
+        if (same) { id = r.id; rememberedDir = rememberedDir || r.dir || null; break; }
+      } catch { /* ignore */ }
     }
   }
+  if (rememberedDir && !dir) {
+    // A folder connected earlier: use it if permission is still there, without asking again.
+    try { if ((await rememberedDir.queryPermission({ mode: 'readwrite' })) === 'granted') dir = rememberedDir; } catch { /* ignore */ }
+  }
   id = id || uid();
-  const fileHandle = () => dir.getFileHandle(fileName);
-  const logsDir = (create = false) => dir.getDirectoryHandle(LOG_FOLDER, { create }).catch((e) => { if (create) throw e; return null; });
+  const logsDir = (create = false) => (dir ? dir.getDirectoryHandle(LOG_FOLDER, { create }).catch((e) => { if (create) throw e; return null; }) : Promise.resolve(null));
 
   const source = {
     id,
     name: fileName,
-    where: dir.name,
-    async remember(client) { await idb.putRecent({ id, kind: 'local', dir, fileName, client }); },
+    where: dir ? dir.name : '',
+    needsFolder: !dir,
+    async remember(client) { await idb.putRecent({ id, kind: 'local', file: fileHandle, dir, fileName, client }); },
 
     async read() {
-      const f = await (await fileHandle()).getFile();
+      const f = await fileHandle.getFile();
       const bytes = await f.arrayBuffer();
       return { bytes, version: await fingerprint(bytes), modifiedAt: f.lastModified };
     },
@@ -105,14 +115,13 @@ export async function openFromFolder(dir, fileName, recentId) {
     // Saves only if the file is still the version that was read, otherwise reports a conflict
     // so the change can be re-applied to the newer file.
     async write(bytes, version) {
-      await ensure(dir);
-      const fh = await fileHandle();
+      await ensure(fileHandle);
       if (version) {
-        const current = await (await fh.getFile()).arrayBuffer();
+        const current = await (await fileHandle.getFile()).arrayBuffer();
         if ((await fingerprint(current)) !== version) throw new StoreError('conflict', 'The timesheet changed while saving.');
       }
       try {
-        const w = await fh.createWritable();
+        const w = await fileHandle.createWritable();
         await w.write(bytes);
         await w.close();
       } catch (e) {
@@ -123,7 +132,7 @@ export async function openFromFolder(dir, fileName, recentId) {
 
     // Cheap check for changes by anyone: timesheet size and time, plus each log file's time.
     async stamp() {
-      const f = await (await fileHandle()).getFile();
+      const f = await fileHandle.getFile();
       const parts = [`${f.lastModified}:${f.size}`];
       const ld = await logsDir();
       if (ld) for await (const [name, h] of ld.entries()) if (h.kind === 'file' && isLogFor(fileName, name)) parts.push(`${name}:${(await h.getFile()).lastModified}`);
@@ -131,6 +140,7 @@ export async function openFromFolder(dir, fileName, recentId) {
     },
 
     async warnings() {
+      if (!dir) return [];
       const out = [];
       const base = fileName.replace(/\.xlsx$/i, '');
       for await (const [name, h] of dir.entries()) {
@@ -143,7 +153,26 @@ export async function openFromFolder(dir, fileName, recentId) {
       return out;
     },
 
-    team: {
+    // Second step for the team log: access to the folder that holds this file.
+    async connectFolder() {
+      let picked;
+      try {
+        picked = await window.showDirectoryPicker({ id: 'bb-timesheets', mode: 'readwrite', startIn: fileHandle });
+      } catch (e) {
+        if (e.name === 'AbortError') throw e;
+        picked = await window.showDirectoryPicker({ id: 'bb-timesheets', mode: 'readwrite' });
+      }
+      await ensure(picked);
+      const path = await picked.resolve(fileHandle);
+      if (!path || path.length !== 1) {
+        throw new StoreError('input', `"${picked.name}" is not the folder that holds ${fileName}. Choose the folder the timesheet is saved in.`);
+      }
+      const next = await openFile(fileHandle, { dir: picked, recentId: id });
+      await next.remember();
+      return next;
+    },
+
+    team: dir ? {
       available: true,
       identity: () => ({ owner: getMeId(), name: getMe() }),
       async list() { return readJsonFiles(await logsDir(), fileName); },
@@ -166,23 +195,21 @@ export async function openFromFolder(dir, fileName, recentId) {
         await w.write(serialiseLog({ ...clean, owner: getMeId(), person: getMe() }));
         await w.close();
       },
-    },
+    } : null,
 
-    async saveCopy(bytes) { return (await saveBytesAs(bytes, versionedName(fileName, 'Backup'), dir)).name; },
+    async saveCopy(bytes) { return (await saveBytesAs(bytes, versionedName(fileName, 'Backup'), dir || fileHandle)).name; },
 
+    // New client timesheet: saved where you choose (the dialog opens next to this one), then opened.
     async createSibling(name, bytes) {
-      try { await dir.getFileHandle(name); throw new StoreError('exists', `"${name}" already exists in this folder.`); } catch (e) { if (e.code === 'exists') throw e; }
-      const fh = await dir.getFileHandle(name, { create: true });
-      const w = await fh.createWritable();
-      await w.write(bytes);
-      await w.close();
-      return openFromFolder(dir, name);
+      const saved = await saveBytesAs(bytes, name, dir || fileHandle);
+      if (!saved.handle) return null;
+      return openFile(saved.handle);
     },
   };
   return source;
 }
 
-/** Fallback for browsers without folder access: one file in memory, updates download as new copies. */
+/** Fallback for browsers without file access (Firefox, Safari): one file in memory, updates download as new copies. */
 export function openFromBytes(name, initial) {
   let bytes = initial;
   let currentName = name;
@@ -202,6 +229,8 @@ export function openFromBytes(name, initial) {
     async stamp() { return null; },
     async warnings() { return []; },
     team: null,
+    needsFolder: false,
+    connectFolder: null,
     async saveCopy(b) { const n = versionedName(name, 'Backup'); downloadBytes(b, n); return n; },
     createSibling: null,
   };
