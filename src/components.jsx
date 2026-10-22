@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { pad, fmtDate, parseAuDate, localDate } from './core/util.js';
+import { manual } from './manual.js';
 
 export function NewTimesheet({ onCancel, onCreate }) {
   const [form, setForm] = useState({ client: '', project: '', contact: '', commencement: localDate(new Date()) });
@@ -64,5 +65,82 @@ export function TimeField({ value, onChange, label }) {
     <input type="text" inputMode="numeric" className={`timefield ${bad ? 'bad' : ''}`} placeholder="HH:MM" aria-label={`${label} (24 hour)`}
       value={text} onChange={(e) => setText(e.target.value)} onBlur={commit}
       onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commit(); } }} />
+  );
+}
+
+// How to use the tracker: shown above the title, can be collapsed (remembered in this browser).
+const GUIDE_KEY = 'bbtt.guideOpen';
+export function Guide({ edition, onManual }) {
+  const [open, setOpen] = useState(() => { try { return localStorage.getItem(GUIDE_KEY) !== '0'; } catch { return true; } });
+  const toggle = (e) => { const v = e.currentTarget.open; setOpen(v); try { localStorage.setItem(GUIDE_KEY, v ? '1' : '0'); } catch { /* ignore */ } };
+  const m365 = edition === 'm365';
+  return (
+    <details className="guide" open={open} onToggle={toggle}>
+      <summary>How to use the tracker</summary>
+      <ol>
+        <li><strong>Your name and client tag.</strong> Type your name and click Save (once). Colleagues see it in the Team log, never in the timesheet. Beside it, check the Client tag for the open timesheet, for example RAWCS.</li>
+        {m365 ? (
+          <li><strong>Open the timesheet.</strong> Click Sign in with Microsoft. In SharePoint or OneDrive, click Copy link on the client timesheet, paste it here and click Open. Next time, use Recent clients.</li>
+        ) : (
+          <li><strong>Open the timesheet.</strong> Click Open timesheet and choose the client's .xlsx file. Next time, use Recent clients.</li>
+        )}
+        {m365 ? (
+          <li><strong>Team log.</strong> Connected automatically. Everyone who opens the same timesheet shares it.</li>
+        ) : (
+          <li><strong>Team log (once per timesheet).</strong> In the Team log panel, click Connect team log. The folder picker opens where the timesheet is saved. Click Select folder, then Edit files.</li>
+        )}
+        <li><strong>Track.</strong> Pick an activity tag such as Content Planning (written with the client tag, for example RAWCS Content Planning), describe the activity, click Start, then End. Click Add another session for the next task. Edit times in Sessions to add if you forgot to start or stop.</li>
+        <li><strong>Save.</strong> Click Add hours to the file. Your work goes to the team log first, so it is safe even if the timesheet is busy. Save to team log only leaves the timesheet for a colleague to update.</li>
+        <li><strong>Colleagues' work.</strong> Click Refresh (it flashes when there are updates). Tick entries marked Not added yet and click Add selected to timesheet. They go in date order.</li>
+        <li><strong>Tools.</strong> Insert rows when Blank rows left is low. Save a copy for a backup. The bin icon deletes a row after you confirm. Undo restores the file as it was before your last change.</li>
+      </ol>
+      <p className="guide-tips">
+        <button className="link dark" onClick={onManual}>Open the full user manual</button>{' '}
+        Use Chrome or Edge. {m365 ? 'Close the timesheet in Excel before saving, because SharePoint holds files open for editing.' : 'Close the timesheet in Excel before saving.'} Dates are DD/MM/YYYY in Perth time.
+      </p>
+    </details>
+  );
+}
+
+// Full user manual in a window over the app (same text as MANUAL.md).
+export function Manual({ edition, onClose }) {
+  const m = manual(edition);
+  useEffect(() => {
+    const onKey = (e) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return (
+    <div className="modal" onClick={onClose}>
+      <article className="card manual" role="dialog" aria-modal="true" aria-label="User manual" onClick={(e) => e.stopPropagation()}>
+        <div className="manual-head">
+          <h1>{m.title}</h1>
+          <div className="row gap">
+            <button className="ghost small" onClick={() => window.print()}>Print</button>
+            <button className="small" onClick={onClose}>Close</button>
+          </div>
+        </div>
+        <p className="manual-notice">{m.notice}</p>
+        <nav className="manual-toc">{m.sections.map((s, i) => <a key={s.h} href={`#man-${i}`}>{s.h}</a>)}</nav>
+        {m.sections.map((s, i) => (
+          <section key={s.h} id={`man-${i}`}>
+            <h2>{s.h}</h2>
+            {s.blocks.map((b, j) => (
+              <div key={j}>
+                {b.p && <p>{b.p}</p>}
+                {b.steps && <ol>{b.steps.map((t) => <li key={t}>{t}</li>)}</ol>}
+                {b.list && <ul>{b.list.map((t) => <li key={t}>{t}</li>)}</ul>}
+                {b.table && (
+                  <table className="rows manual-table">
+                    <thead><tr>{b.table[0].map((c) => <th key={c}>{c}</th>)}</tr></thead>
+                    <tbody>{b.table.slice(1).map((r) => <tr key={r[0]}>{r.map((c, k) => <td key={k}>{k === 0 ? <strong>{c}</strong> : c}</td>)}</tr>)}</tbody>
+                  </table>
+                )}
+              </div>
+            ))}
+          </section>
+        ))}
+      </article>
+    </div>
   );
 }

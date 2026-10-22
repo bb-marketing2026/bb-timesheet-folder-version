@@ -120,3 +120,72 @@ export function sessionsToEntries(rows, sessions, uid) {
     savedAt: new Date().toISOString(),
   }));
 }
+
+// ---------- Per-person log files with safe merging ----------
+// Each person's file holds one "section" (part). Markers are kept with a time and a removed flag,
+// so an undone marker never comes back when two copies of the same log are merged (for example
+// a OneDrive conflict copy, or the copy each browser keeps of its own log).
+//
+// { app, version: 2, kind: 'person-log', owner, timesheet, person, nameAt,
+//   entries: [...], added: { [entryId]: { row, at, removed? } } }
+
+/** Read one person's log file (version 1 or 2) as { owner, part }. */
+export function parsePersonLog(text, fileName) {
+  let j;
+  try { j = JSON.parse(text); } catch { return null; }
+  if (!j || j.app !== APP || !Array.isArray(j.entries)) return null;
+  const added = Array.isArray(j.added)
+    ? Object.fromEntries(j.added.map((m) => [m.entryId, { row: m.row, at: m.at || '' }]))
+    : (j.added || {});
+  return {
+    owner: j.owner || `file:${fileName}`,
+    timesheet: j.timesheet || '',
+    part: { person: j.person || '', nameAt: j.nameAt || '', entries: j.entries, added },
+  };
+}
+
+export function personLogJson(owner, timesheetName, part) {
+  return JSON.stringify({ app: APP, version: 2, kind: 'person-log', owner, timesheet: timesheetName, ...part }, null, 2);
+}
+
+export const emptyPart = () => ({ person: '', nameAt: '', entries: [], added: {} });
+
+/** Combine two versions of one person's section: keep every entry, the latest state of each marker and name. */
+export function mergePart(a = emptyPart(), b = emptyPart()) {
+  const entries = new Map();
+  for (const e of [...(a.entries || []), ...(b.entries || [])]) if (!entries.has(e.id)) entries.set(e.id, e);
+  const added = { ...(a.added || {}) };
+  for (const [id, m] of Object.entries(b.added || {})) if (!added[id] || (m.at || '') > (added[id].at || '')) added[id] = m;
+  const useB = (b.nameAt || '') >= (a.nameAt || '');
+  return { person: (useB ? b.person : a.person) || a.person || b.person || '', nameAt: useB ? b.nameAt : a.nameAt, entries: [...entries.values()], added };
+}
+
+/** True when `part` has something the file's copy is missing (so the file needs putting right). */
+export function partMissingFrom(part, inFile = emptyPart()) {
+  const ids = new Set((inFile.entries || []).map((e) => e.id));
+  if ((part.entries || []).some((e) => !ids.has(e.id))) return true;
+  for (const [id, m] of Object.entries(part.added || {})) {
+    const f = inFile.added?.[id];
+    if (!f || (m.at || '') > (f.at || '')) return true;
+  }
+  return (part.nameAt || '') > (inFile.nameAt || '');
+}
+
+/** Sections ({ people: { owner: part } }) as a list of per-person logs, the shape the Team log panel uses. */
+export function docToLogs(doc) {
+  return Object.entries(doc?.people || {}).map(([owner, p]) => ({
+    app: APP, owner, person: p.person || 'Unnamed', timesheet: doc.timesheet,
+    entries: p.entries || [],
+    added: Object.entries(p.added || {}).filter(([, m]) => !m.removed).map(([entryId, m]) => ({ entryId, row: m.row, at: m.at })),
+  }));
+}
+
+/** Turn an edited log (entries + current markers) back into a section, recording removed markers. */
+export function logToPart(log, prev = emptyPart(), name, now = new Date().toISOString()) {
+  const added = { ...(prev.added || {}) };
+  const current = new Set(log.added.map((m) => m.entryId));
+  for (const m of log.added) if (!added[m.entryId] || added[m.entryId].removed) added[m.entryId] = { row: m.row, at: m.at || now };
+  for (const id of Object.keys(added)) if (!current.has(id) && !added[id].removed) added[id] = { ...added[id], removed: true, at: now };
+  const renamed = name && name !== prev.person;
+  return { person: name || prev.person, nameAt: renamed ? now : prev.nameAt || now, entries: log.entries, added };
+}

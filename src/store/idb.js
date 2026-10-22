@@ -1,15 +1,16 @@
 // Small IndexedDB store: recent timesheets and undo history (kept in this browser only).
 const DB = 'bb-timesheet';
-const STORES = ['files', 'history'];
+const STORES = ['files', 'history', 'mine'];
 const HISTORY_MAX = 10;
 
 function db() {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB, 3);
+    const req = indexedDB.open(DB, 4);
     req.onupgradeneeded = () => {
       const d = req.result;
       if (!d.objectStoreNames.contains('files')) d.createObjectStore('files', { keyPath: 'id' });
       if (!d.objectStoreNames.contains('history')) d.createObjectStore('history', { keyPath: 'fileId' });
+      if (!d.objectStoreNames.contains('mine')) d.createObjectStore('mine', { keyPath: 'key' });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -46,3 +47,9 @@ export async function popHistory(fileId) {
   await tx('history', 'readwrite', (s) => s.put({ fileId, items }));
   return items;
 }
+
+// Your own section of a shared team log, kept in this browser so it can be restored if lost.
+export async function getMine(key) {
+  try { return (await tx('mine', 'readonly', (s) => s.get(key)))?.part || null; } catch { return null; }
+}
+export const putMine = (key, part) => tx('mine', 'readwrite', (s) => s.put({ key, part }));

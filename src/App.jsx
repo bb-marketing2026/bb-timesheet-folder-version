@@ -7,7 +7,8 @@ import {
 } from './core/util.js';
 import * as store from './store/index.js';
 import { getHistory, pushHistory, popHistory } from './store/idb.js';
-import { NewTimesheet, DateField, TimeField } from './components.jsx';
+import { NewTimesheet, DateField, TimeField, Guide, Manual } from './components.jsx';
+import { detectClientTag, genericTags, withClient } from './core/tags.js';
 
 const POLL_MS = 60000; // how often to look for changes made by others
 const MAX_RETRIES = 5; // re-apply a change this many times if someone else saved first
@@ -42,6 +43,10 @@ export default function App() {
   const [nameEdit, setNameEdit] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
   const [nameConflict, setNameConflict] = useState(null); // { name, owner } when a log already uses the name
+  const [clientTag, setClientTag] = useState(''); // client short name for the open timesheet, e.g. "RAWCS"
+  const [clientAuto, setClientAuto] = useState(false); // true while it is the guess from the file, not yet saved
+  const [clientEdit, setClientEdit] = useState(false);
+  const [clientDraft, setClientDraft] = useState('');
   const [timer, setTimer] = usePersisted('bbtt.timer', { tag: '', activity: '', start: null, end: null });
   const [sessions, setSessions] = usePersisted('bbtt.sessions', []);
   const [combine, setCombine] = usePersisted('bbtt.combine', true);
@@ -52,6 +57,7 @@ export default function App() {
   const [shown, setShown] = useState(8);
   const [insertCount, setInsertCount] = useState('50');
   const [showNew, setShowNew] = useState(false);
+  const [showManual, setShowManual] = useState(false);
   const [logs, setLogs] = useState([]);
   const [teamError, setTeamError] = useState('');
   const [teamFilter, setTeamFilter] = useState({ person: 'all', status: 'open' });
@@ -80,7 +86,8 @@ export default function App() {
   const pendingHours = fileSessions.reduce((sum, s) => sum + hoursBetween(s.start, s.end), 0);
   const currentHours = timer.start ? (timer.end ? hoursBetween(timer.start, timer.end) : liveHours) : 0;
   const info = file?.info;
-  const tags = info?.tags || [];
+  const tags = useMemo(() => genericTags(info?.tags || [], clientTag), [info, clientTag]); // generic activity tags
+  const fullTag = (t) => withClient(t, clientTag);
 
   // ---------- loading ----------
   const loadTeam = useCallback(async (src) => {
@@ -100,7 +107,14 @@ export default function App() {
   async function show(src, bytes, preferredSheet) {
     const info2 = analyse(await readWorkbook(bytes), preferredSheet);
     setFile({ bytes, info: info2, sheet: info2.sheetName });
-    if (!timer.tag && info2.tags[0]) setTimer((t) => ({ ...t, tag: info2.tags[0] }));
+    // Client tag: saved for this timesheet, otherwise the guess from the file.
+    const detected = detectClientTag(info2);
+    let saved = null;
+    try { saved = localStorage.getItem(`bbtt.clientTag.${src.id}`); } catch { /* ignore */ }
+    const ct = saved !== null ? saved : detected;
+    setClientTag(ct);
+    setClientAuto(saved === null);
+    if (!timer.tag && info2.tags[0]) setTimer((t) => ({ ...t, tag: genericTags(info2.tags, ct)[0] || '' }));
     return info2;
   }
 
@@ -134,6 +148,7 @@ export default function App() {
       setSource(src);
       setConfirm(null);
       setSelected(new Set());
+      setClientEdit(false);
       const info2 = await refreshAll(src, { quiet: true });
       await syncName(src);
       await src.remember(info2.client);
@@ -153,6 +168,16 @@ export default function App() {
       const mine = list.find((l) => ownerOf(l) === store.getMeId());
       if (mine && mine.person !== store.getMe()) { await src.team.writeMine(mine); await loadTeam(src); }
     } catch { /* team log not available */ }
+  }
+
+  function saveClientTag() {
+    if (!source) return;
+    const v = clientDraft.trim();
+    try { localStorage.setItem(`bbtt.clientTag.${source.id}`, v); } catch { /* ignore */ }
+    setClientTag(v);
+    setClientAuto(false);
+    setClientEdit(false);
+    flash('ok', v ? `Client tag for ${source.name} is ${v}. "Content Planning" is written as "${v} Content Planning".` : `No client tag for ${source.name}. Activity tags are written exactly as typed.`);
   }
 
   async function saveName(draft, claim) {
@@ -196,17 +221,17 @@ export default function App() {
       const handle = await store.pickFile();
       const src = await store.openFile(handle);
       await connect(src, src.needsFolder
-        ? `Opened ${src.name}. To share the team log with colleagues, click "Connect team log" in the Team log panel.`
-        : `Opened ${src.name}.`);
+        ? `Opened ${src.name}. To share hours with colleagues, click "Connect team log" in the Team log panel.`
+        : `Opened ${src.name} with its team log.`);
     } catch (e) { if (e.name !== 'AbortError') flash('error', e.message); }
   }
 
-  // Team log needs the folder that holds the timesheet (local edition).
+  // Local edition: the team log lives in the folder that holds the timesheet (connected once).
   async function connectTeamFolder() {
     if (!source?.connectFolder) return;
     try {
       const next = await source.connectFolder();
-      await connect(next, 'Team log connected. Colleagues who open the same timesheet and connect its folder share this log.');
+      await connect(next, 'Team log connected. Colleagues who open this timesheet and connect its folder share the same log.');
     } catch (e) { if (e.name !== 'AbortError') flash('error', e.message); }
   }
 
@@ -242,7 +267,7 @@ export default function App() {
     const endIso = new Date().toISOString();
     setSessions((list) => [...list, {
       id: uid(), fileId: source?.id || null, date: localDate(new Date(timer.start)),
-      tag: timer.tag.trim(), activity: timer.activity.trim(), start: timer.start, end: endIso,
+      tag: fullTag(timer.tag), activity: timer.activity.trim(), start: timer.start, end: endIso,
     }]);
     setTimer((t) => ({ ...t, end: endIso }));
   }
@@ -252,7 +277,7 @@ export default function App() {
     const startD = new Date(endD.getTime() - 30 * 60000);
     setSessions((list) => [...list, {
       id: uid(), fileId: source?.id || null, date: localDate(startD),
-      tag: timer.tag.trim(), activity: timer.activity.trim(), start: startD.toISOString(), end: endD.toISOString(),
+      tag: fullTag(timer.tag), activity: timer.activity.trim(), start: startD.toISOString(), end: endD.toISOString(),
     }]);
   }
   const updateSession = (id, patch) => setSessions((list) => list.map((s) => (s.id === id ? { ...s, ...patch } : s)));
@@ -472,13 +497,18 @@ export default function App() {
         <span>Internal Brainbox use only. Do not forward, publish or distribute outside the group.</span>
       </div>
     <div className="app">
+      <Guide edition={store.kind} onManual={() => setShowManual(true)} />
       <header className="bar">
         <div className="brand"><span className="dot" />Brainbox Timesheet Tracker{store.kind === 'm365' && <span className="tagline">Microsoft 365</span>}</div>
-        {running && <div className="live"><span className="pulse" />{clock(now - new Date(timer.start))}</div>}
+        <div className="row gap">
+          {running && <div className="live"><span className="pulse" />{clock(now - new Date(timer.start))}</div>}
+          <button className="ghost small" onClick={() => setShowManual(true)}>User manual</button>
+        </div>
       </header>
 
       {/* Your name: shown to colleagues in the Team log, never written into the timesheet. */}
       <div className="namebar">
+        <div className="namebar-name">
         {nameEdit || !myName ? (
           <div className="namebar-edit">
             <label htmlFor="me">Your name</label>
@@ -512,6 +542,28 @@ export default function App() {
             <span className="hint">Shown to colleagues in the Team log.</span>
           </div>
         )}
+        </div>
+        <div className="namebar-client">
+          {!file ? (
+            <div className="namebar-show"><span>Client tag: <span className="muted">open a timesheet</span></span></div>
+          ) : clientEdit || (!clientTag && clientAuto) ? (
+            <div className="namebar-edit">
+              <label htmlFor="client-tag">Client tag</label>
+              <div className="row gap nowrap">
+                <input id="client-tag" value={clientDraft} placeholder="Client short name" maxLength={30}
+                  onChange={(e) => setClientDraft(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && saveClientTag()} />
+                <button className="small" onClick={saveClientTag} disabled={busy}>Save</button>
+                {clientEdit && <button className="ghost small" onClick={() => setClientEdit(false)}>Cancel</button>}
+              </div>
+              <span className="hint">Starts every activity tag written for this timesheet, for example "{(clientDraft || 'Client').trim() || 'Client'} Content Planning". Leave empty for none.</span>
+            </div>
+          ) : (
+            <div className="namebar-show">
+              <span>Client tag: <strong>{clientTag || 'none'}</strong>{clientAuto && clientTag && <span className="muted"> (from the timesheet)</span>}</span>
+              <button className="link dark" onClick={() => { setClientDraft(clientTag); setClientEdit(true); }}>Change</button>
+            </div>
+          )}
+        </div>
       </div>
 
       {status && (
@@ -627,6 +679,8 @@ export default function App() {
               <span>Activity tag</span>
               <input list="tags" value={timer.tag} placeholder="e.g. Content Planning" onChange={(e) => setTimer((t) => ({ ...t, tag: e.target.value }))} />
               <datalist id="tags">{tags.map((t) => <option key={t} value={t} />)}</datalist>
+              <datalist id="fulltags">{(info?.tags || []).map((t) => <option key={t} value={t} />)}</datalist>
+              {clientTag && timer.tag.trim() && <span className="tag-preview">Written to the timesheet as <strong>{fullTag(timer.tag)}</strong></span>}
             </label>
             <label className="field">
               <span>Activity</span>
@@ -665,7 +719,7 @@ export default function App() {
                   return (
                     <div key={s.id} className={`session ${bad ? 'bad' : ''}`}>
                       <div className="s-top">
-                        <input list="tags" className="s-tag" value={s.tag} placeholder="Activity tag" onChange={(e) => updateSession(s.id, { tag: e.target.value })} />
+                        <input list="fulltags" className="s-tag" value={s.tag} placeholder="Activity tag" onChange={(e) => updateSession(s.id, { tag: e.target.value })} />
                         <button className="icon" aria-label="Delete session" onClick={() => setSessions((l) => l.filter((x) => x.id !== s.id))}>×</button>
                       </div>
                       <input className="s-act" value={s.activity} placeholder="Activity (required)" onChange={(e) => updateSession(s.id, { activity: e.target.value })} />
@@ -707,9 +761,9 @@ export default function App() {
               </div>
               {!team && source.needsFolder ? (
                 <div className="connect-team">
-                  <p>Share a team log with colleagues working on this timesheet. Allow access to the folder that holds <strong>{source.name}</strong>, so the app can keep the log next to it.</p>
+                  <p>Share hours with colleagues working on this timesheet. Connect the folder that holds <strong>{source.name}</strong> and the app keeps everyone's log in a "Timesheet Logs" folder beside it.</p>
                   <button className="small" onClick={connectTeamFolder} disabled={busy}>Connect team log</button>
-                  <span className="hint">The folder picker opens where the timesheet is saved. Click "Select folder". You only do this once per timesheet.</span>
+                  <span className="hint">The folder picker opens where the timesheet is saved. Click "Select folder", then "Edit files". Once per timesheet. The app checks you picked the right folder.</span>
                 </div>
               ) : !team ? (
                 <p className="muted">{source.downloadMode ? 'The team log needs Chrome or Edge.' : 'Team log is not available for this file.'}</p>
@@ -759,7 +813,7 @@ export default function App() {
                       <button className="link dark" onClick={() => setSelected(new Set(filtered.filter((e) => e.status === 'pending').map((e) => e.id)))}>Select all not added</button>
                     )}
                   </div>
-                  <p className="hint">Entries are placed in date order. Names stay in the team log and are never written into the timesheet.</p>
+                  <p className="hint">Entries are placed in date order. Names stay in the team log and are never written into the timesheet.{team.folderLabel ? ` Logs are kept in ${team.folderLabel}.` : ''}</p>
                 </>
               )}
             </div>
@@ -804,6 +858,7 @@ export default function App() {
       </main>
 
       {showNew && <NewTimesheet onCancel={() => setShowNew(false)} onCreate={createNew} />}
+      {showManual && <Manual edition={store.kind} onClose={() => setShowManual(false)} />}
     </div>
     </>
   );

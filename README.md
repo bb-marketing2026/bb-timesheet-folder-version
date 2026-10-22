@@ -11,7 +11,9 @@ There is a separate Microsoft 365 edition, which saves directly through SharePoi
 | Panel or field | What it does |
 |---|---|
 | Open timesheet | Choose the client timesheet file (.xlsx). The app saves straight back into it. Recent clients are remembered. |
-| Connect team log | Optional, once per timesheet, in the Team log panel. The folder picker opens where the timesheet is saved; click **Select folder**. The app checks it is the right folder, then keeps the team log next to the file. |
+| Connect team log | Once per timesheet, in the Team log panel. The folder picker opens where the timesheet is saved. Click **Select folder**, then **Edit files**. The app checks it is the right folder, then keeps everyone's logs in a **Timesheet Logs** folder beside the timesheet. |
+| How to use the tracker / User manual | Short guide above the title (click to collapse). **User manual** (top right) opens the full manual, which can be printed. The same manual is in `MANUAL.md`. |
+| Client tag (beside your name) | The client's short name, for example `RAWCS`, detected from the timesheet and saved per timesheet. Pick a generic activity tag such as `Content Planning` and the app writes `RAWCS Content Planning`. Click **Change** to edit it, or leave it empty for none. |
 | Your name (under the title) | Type your name and click **Save**. There is no default. Colleagues see it next to your entries in the Team log after they press **Refresh**. It is never written into the timesheet. Click **Change** to update it. Your existing log keeps working under the new name. |
 | Activity tag / Activity | Written to **Project Description** and **Activities**. Tags are suggested from the file. |
 | Start / End | The timer. It survives a refresh or closed tab. |
@@ -44,7 +46,12 @@ Clients/RAWCS/
     Brainbox - Timesheet - RAWCS - Jo.json     a colleague's log
 ```
 
-Each person writes only their own log, so logs never clash. A log is named after the name first saved, and each log carries a fixed ID, so changing your name later updates the same log. If a colleague already uses the name you type, the app asks whether that log is yours (for example from another computer) before linking it, otherwise you choose a different name.
+Each person writes only their own log, so logs never clash. Each log carries a fixed ID, so changing your name updates the same log. Improvements over a plain shared folder:
+
+- Your browser keeps a copy of your own log and puts it back on Refresh if a OneDrive conflict or a deleted file loses it.
+- OneDrive conflict copies of one person's log are merged into one, never shown twice.
+- Undone entries stay undone when copies are merged.
+- The app warns when the timesheet is open in Excel on your computer, or when OneDrive has made a conflict copy of it.
 
 ## Recommended way of working when several people share a client
 
@@ -60,7 +67,6 @@ When two people are very likely to save at the same time, use **Save to team log
 - It changes only the cells it writes. Other sheets, sensitivity labels, SharePoint metadata, custom properties and printer settings are kept byte for byte.
 - Before saving, it checks the file has not changed since it was read. If it has, it applies the change again to the newer file.
 - Every add, delete and insert is checked before saving (existing rows unchanged, totals add up, dates in order). Nothing is saved if a check fails.
-- It warns when it finds a OneDrive conflict copy (for example `... RAWCS-DESKTOP-ABC.xlsx`) or the file is open in Excel on this computer.
 
 ## Run locally
 
@@ -93,10 +99,10 @@ Open http://localhost:5173 in Chrome or Edge.
 ## Known issues and limits
 
 - **Chrome or Edge only for the full app.** Firefox and Safari can open one file and download updated copies, with no team log.
-- **OneDrive sync delay.** Each computer saves its own copy and OneDrive takes seconds to minutes to sync. Two saves to the same timesheet inside that gap can still produce a conflict copy. The app warns when it sees one, and the Team log "Check" status shows rows that went missing. The Microsoft 365 edition removes this risk.
+- **OneDrive sync delay.** Each computer saves its own copy and OneDrive takes seconds to minutes to sync. Two saves to the same timesheet inside that gap can still produce a OneDrive conflict copy (for example `... RAWCS-DESKTOP-ABC.xlsx`). The app warns when it sees one, the Team log "Check" status shows rows that went missing, and each person's log restores itself. The Microsoft 365 edition removes this risk.
 - **Close the timesheet in Excel before saving from the app.** Windows locks open files.
-- **Permission prompt.** Chrome asks to allow editing of the timesheet (and its folder, if the team log is connected) once per browser session.
-- **Without Connect team log**, the timesheet works fully, but the Team log, conflict copy warnings and Excel-open warnings are off.
+- **Permission prompt.** Chrome asks to allow editing of the timesheet (and its folder, once the team log is connected) once per browser session.
+- **Without Connect team log**, the timesheet works fully. Only the Team log and the folder warnings are off.
 - **Inserting rows is refused** on sheets with tables, charts, images, comments or pivot tables. Do that in Excel.
 - **Timers, pending sessions, recent clients and undo copies** stay in each person's browser.
 
@@ -114,7 +120,9 @@ npm test -- "path/to/Brainbox - Timesheet - RAWCS.xlsx"
 | `src/components.jsx` | Date, time and new timesheet forms |
 | `src/core/timesheet.js` | Reads the timesheet and creates new client timesheets |
 | `src/core/xlsxPatch.js` | Cell-level add (in date order), delete and insert rows, with checks |
-| `src/core/team.js` | Team log format and statuses |
+| `src/core/team.js` | Team log format, merge rules and statuses |
+| `src/core/tags.js` | Client tag detection and combining with activity tags |
+| `src/manual.js` | The user manual (in the app and MANUAL.md) |
 | `src/core/util.js` | Australian dates (Perth time), file names, downloads |
-| `src/store/local.js` | File access, optional folder access for the team log, change checks, conflict copy warnings |
+| `src/store/local.js` | File access, team log folder, self-restoring logs, change checks, warnings |
 | `src/store/idb.js` | Recent clients and undo history in the browser |

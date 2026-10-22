@@ -1,11 +1,15 @@
 // Timesheets on this computer or in a OneDrive-synced folder (Chrome and Edge, File System Access API).
 // You open the timesheet file itself and the app saves straight back into it.
-// For the team log, you can also connect the folder that holds the file (one click, the
-// folder picker opens in the right place). The app then keeps logs in a "Timesheet Logs"
-// subfolder and can spot OneDrive conflict copies or the file being open in Excel.
+// For the team log you connect the folder that holds the timesheet once (the folder picker opens
+// in the right place and the app checks it is the right folder). Each person then keeps their own
+// log file in a "Timesheet Logs" subfolder, which only their app writes, so logs never clash.
+// Improvements over a plain shared folder:
+//   - your browser keeps a copy of your own log and puts it back if a OneDrive conflict loses it
+//   - duplicate copies of one person's log (OneDrive conflict copies) are merged, never doubled
+//   - warnings when the timesheet is open in Excel or OneDrive has made a conflict copy
 // Other browsers fall back to opening a single file and downloading updated copies.
 import { fingerprint } from '../core/xlsxPatch.js';
-import { LOG_FOLDER, isLogFor, parseLog, emptyLog, serialiseLog, ownerOf, freeLogName } from '../core/team.js';
+import { LOG_FOLDER, isLogFor, freeLogName, emptyLog, docToLogs, mergePart, partMissingFrom, logToPart, emptyPart, parsePersonLog, personLogJson } from '../core/team.js';
 import { StoreError, downloadBytes, saveBytesAs, uid, versionedName, XLSX_TYPE } from '../core/util.js';
 import * as idb from './idb.js';
 
@@ -52,52 +56,75 @@ export async function pickFile() {
   return handle;
 }
 
-async function readJsonFiles(logsDir, fileName) {
-  const out = [];
-  if (!logsDir) return out;
-  for await (const [name, h] of logsDir.entries()) {
-    if (h.kind !== 'file' || !isLogFor(fileName, name)) continue;
-    const f = await h.getFile();
-    const log = parseLog(await f.text(), name);
-    if (log && (!log.timesheet || log.timesheet.toLowerCase() === fileName.toLowerCase())) out.push({ ...log, fileName: name, modified: f.lastModified });
-  }
-  return out;
+async function readText(handle) { return (await handle.getFile()).text(); }
+async function writeText(handle, text) {
+  const w = await handle.createWritable();
+  await w.write(text);
+  await w.close();
 }
 
 export async function openRecent(rec) {
-  if (rec.dir) {
-    // Folder access covers the file inside it, so one permission prompt is enough.
-    await ensure(rec.dir);
-    return openFile(await rec.dir.getFileHandle(rec.fileName), { dir: rec.dir, recentId: rec.id });
+  if (rec.dir && rec.fileName) {
+    // Folder access covers the timesheet inside it, so one permission prompt is enough.
+    try {
+      await ensure(rec.dir);
+      return openFile(await rec.dir.getFileHandle(rec.fileName), { dir: rec.dir, recentId: rec.id });
+    } catch (e) { if (!rec.file) throw e; }
   }
   await ensure(rec.file);
   return openFile(rec.file, { recentId: rec.id });
 }
 
 /**
- * Open a timesheet from its file handle. `dir` (the folder holding the file) is optional:
- * without it the timesheet works as normal and only the team log is unavailable.
+ * Open a timesheet from its file handle. `dir` (the folder holding it) is optional: without it the
+ * timesheet works as normal and only the team log and folder warnings are unavailable.
  */
 export async function openFile(fileHandle, { dir = null, recentId } = {}) {
   await ensure(fileHandle);
   const fileName = fileHandle.name;
-  // One recent entry per file.
+  // One recent entry per file; reuse a folder connected earlier if permission is still there.
   let id = recentId;
-  let rememberedDir = dir;
-  if (!id) {
-    for (const r of await idb.listRecent()) {
-      try {
-        const same = r.kind === 'local' && (r.file ? await r.file.isSameEntry(fileHandle) : r.fileName === fileName && r.dir && (await r.dir.resolve(fileHandle))?.length === 1);
-        if (same) { id = r.id; rememberedDir = rememberedDir || r.dir || null; break; }
-      } catch { /* ignore */ }
-    }
+  let remembered = dir;
+  for (const r of await idb.listRecent()) {
+    try {
+      if (r.kind !== 'local') continue;
+      const same = (r.id && r.id === id) || (r.file && (await r.file.isSameEntry(fileHandle)));
+      if (same) { id = r.id; remembered = remembered || r.dir || null; break; }
+    } catch { /* ignore */ }
   }
-  if (rememberedDir && !dir) {
-    // A folder connected earlier: use it if permission is still there, without asking again.
-    try { if ((await rememberedDir.queryPermission({ mode: 'readwrite' })) === 'granted') dir = rememberedDir; } catch { /* ignore */ }
+  if (remembered && !dir) {
+    try { if ((await remembered.queryPermission({ mode: 'readwrite' })) === 'granted') dir = remembered; } catch { /* ignore */ }
   }
   id = id || uid();
+  const mineKey = () => `${id}:${getMeId()}`;
   const logsDir = (create = false) => (dir ? dir.getDirectoryHandle(LOG_FOLDER, { create }).catch((e) => { if (create) throw e; return null; }) : Promise.resolve(null));
+
+  // Every log file for this timesheet, merged per person (conflict copies of one log become one).
+  async function readAll() {
+    const ld = await logsDir();
+    const people = {};
+    const files = {};
+    if (ld) {
+      for await (const [name, h] of ld.entries()) {
+        if (h.kind !== 'file' || !isLogFor(fileName, name)) continue;
+        const parsed = parsePersonLog(await readText(h), name);
+        if (!parsed || (parsed.timesheet && parsed.timesheet.toLowerCase() !== fileName.toLowerCase())) continue;
+        people[parsed.owner] = mergePart(people[parsed.owner], parsed.part);
+        // Remember this person's main file: the shortest name (conflict copies get longer names).
+        if (!files[parsed.owner] || name.length < files[parsed.owner].length) files[parsed.owner] = name;
+      }
+    }
+    return { ld, people, files };
+  }
+  async function myPart(people) {
+    return mergePart(people[getMeId()] || emptyPart(), (await idb.getMine(mineKey())) || emptyPart());
+  }
+  async function writeMyFile(ld, files, part) {
+    const taken = [];
+    for await (const [n] of ld.entries()) taken.push(n);
+    const target = files[getMeId()] || freeLogName(fileName, getMe() || 'Unnamed', taken);
+    await writeText(await ld.getFileHandle(target, { create: true }), personLogJson(getMeId(), fileName, part));
+  }
 
   const source = {
     id,
@@ -153,7 +180,7 @@ export async function openFile(fileHandle, { dir = null, recentId } = {}) {
       return out;
     },
 
-    // Second step for the team log: access to the folder that holds this file.
+    // Team log: connect the folder that holds this timesheet (once).
     async connectFolder() {
       let picked;
       try {
@@ -174,26 +201,34 @@ export async function openFile(fileHandle, { dir = null, recentId } = {}) {
 
     team: dir ? {
       available: true,
+      folderLabel: `${dir.name} / ${LOG_FOLDER}`,
       identity: () => ({ owner: getMeId(), name: getMe() }),
-      async list() { return readJsonFiles(await logsDir(), fileName); },
-      async readMine() {
-        const mine = (await readJsonFiles(await logsDir(), fileName)).find((l) => ownerOf(l) === getMeId());
-        return mine || emptyLog(getMe(), fileName, getMeId());
+      async list() {
+        const { ld, people, files } = await readAll();
+        // Put back anything of mine my file is missing (lost in a OneDrive conflict, or deleted).
+        const mine = await myPart(people);
+        if ((mine.entries.length || Object.keys(mine.added).length) && partMissingFrom(mine, people[getMeId()])) {
+          try {
+            if ((await dir.queryPermission({ mode: 'readwrite' })) === 'granted') {
+              const ld2 = ld || (await logsDir(true));
+              await writeMyFile(ld2, files, mine);
+              people[getMeId()] = mine;
+            }
+          } catch { /* read-only for now */ }
+        }
+        return docToLogs({ timesheet: fileName, people }).map((l) => ({ ...l, fileName: files[l.owner] || '' }));
       },
-      // Writes to the file this person already owns, or a new file named after them.
+      async readMine() {
+        const { people } = await readAll();
+        const [log] = docToLogs({ timesheet: fileName, people: { [getMeId()]: await myPart(people) } });
+        return log || emptyLog(getMe(), fileName, getMeId());
+      },
       async writeMine(log) {
         await ensure(dir);
-        const ld = await logsDir(true);
-        const all = await readJsonFiles(ld, fileName);
-        const existing = all.find((l) => ownerOf(l) === getMeId());
-        const taken = [];
-        for await (const [n] of ld.entries()) taken.push(n);
-        const target = existing?.fileName || freeLogName(fileName, getMe() || 'Unnamed', taken);
-        const fh = await ld.getFileHandle(target, { create: true });
-        const w = await fh.createWritable();
-        const { fileName: _f, modified: _m, ...clean } = log;
-        await w.write(serialiseLog({ ...clean, owner: getMeId(), person: getMe() }));
-        await w.close();
+        const { people, files } = await readAll();
+        const part = logToPart(log, await myPart(people), getMe());
+        await idb.putMine(mineKey(), part);
+        await writeMyFile(await logsDir(true), files, mergePart(people[getMeId()], part));
       },
     } : null,
 
