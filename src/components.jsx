@@ -68,15 +68,15 @@ export function TimeField({ value, onChange, label }) {
   );
 }
 
-// How to use the tracker: shown above the title, can be collapsed (remembered in this browser).
-const GUIDE_KEY = 'bbtt.guideOpen';
-export function Guide({ edition, onManual }) {
-  const [open, setOpen] = useState(() => { try { return localStorage.getItem(GUIDE_KEY) !== '0'; } catch { return true; } });
-  const toggle = (e) => { const v = e.currentTarget.open; setOpen(v); try { localStorage.setItem(GUIDE_KEY, v ? '1' : '0'); } catch { /* ignore */ } };
+// How to use the tracker: opened with the "How to use" button beside User manual.
+export function Guide({ edition, onManual, onClose }) {
   const m365 = edition === 'm365';
   return (
-    <details className="guide" open={open} onToggle={toggle}>
-      <summary>How to use the tracker</summary>
+    <section className="guide" aria-label="How to use the tracker">
+      <div className="guide-head">
+        <h2>How to use the tracker</h2>
+        <button className="close" onClick={onClose} aria-label="Close how to use">×</button>
+      </div>
       <ol>
         <li><strong>Your name and client tag.</strong> Type your name and click Save (once). Colleagues see it in the Team log, never in the timesheet. Beside it, check the Client tag for the open timesheet, for example RAWCS.</li>
         {m365 ? (
@@ -91,14 +91,14 @@ export function Guide({ edition, onManual }) {
         )}
         <li><strong>Track.</strong> Pick an activity tag such as Content Planning (written with the client tag, for example RAWCS Content Planning), describe the activity, click Start, then End. Click Add another session for the next task. Edit times in Sessions to add if you forgot to start or stop.</li>
         <li><strong>Save.</strong> Click Add hours to the file. Your work goes to the team log first, so it is safe even if the timesheet is busy. Save to team log only leaves the timesheet for a colleague to update.</li>
-        <li><strong>Colleagues' work.</strong> Click Refresh (it flashes when there are updates). Tick entries marked Not added yet and click Add selected to timesheet. They go in date order.</li>
-        <li><strong>Tools.</strong> Insert rows when Blank rows left is low. Save a copy for a backup. The bin icon deletes a row after you confirm. Undo restores the file as it was before your last change.</li>
+        <li><strong>Colleagues' work.</strong> Click Refresh (it flashes when there are updates). Tick entries and click Add selected to timesheet (placed in date order), Archive selected (hide, timesheet unchanged) or Delete selected (removes them, and their rows if they are in the timesheet).</li>
+        <li><strong>Tools.</strong> Insert rows when Blank rows left is low. Save a copy for a backup. The bin icon deletes a row after you confirm, and its team log entry shows Removed from timesheet after Refresh. Undo restores the file as it was before your last change.</li>
       </ol>
       <p className="guide-tips">
         <button className="link dark" onClick={onManual}>Open the full user manual</button>{' '}
         Use Chrome or Edge. {m365 ? 'Close the timesheet in Excel before saving, because SharePoint holds files open for editing.' : 'Close the timesheet in Excel before saving.'} Dates are DD/MM/YYYY in Perth time.
       </p>
-    </details>
+    </section>
   );
 }
 

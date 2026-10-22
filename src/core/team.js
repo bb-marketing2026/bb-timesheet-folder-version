@@ -66,8 +66,8 @@ export function addEntries(log, entries) {
 }
 
 export function addMarkers(log, markers) {
-  const ids = new Set(log.added.map((m) => m.entryId));
-  return { ...log, added: [...log.added, ...markers.filter((m) => !ids.has(m.entryId))] };
+  const fresh = new Map(markers.map((m) => [m.entryId, m]));
+  return { ...log, added: [...log.added.filter((m) => !fresh.has(m.entryId)), ...fresh.values()] };
 }
 
 export function removeMarkers(log, entryIds) {
@@ -84,24 +84,68 @@ const rowKey = (date, tag, activity, hours) => `${date}|${tag.trim().toLowerCase
  *   check    marked as added, but no matching row was found (edited or deleted in Excel,
  *            or lost in a sync conflict). Shown so someone can look, never re-added automatically.
  */
+// ---------- Notes on entries: archive, delete, removed from timesheet ----------
+// Anyone can archive or delete any entry, or record that its row was deleted from the timesheet.
+// Each note lives in the log of the person who made it, as { [entryId]: { [flag]: { v, at, by } } },
+// and the latest note for each flag wins across everyone's logs.
+export const NOTE_FLAGS = ['archived', 'deleted', 'sheetDeleted'];
+
+export function mergeNotes(a = {}, b = {}) {
+  const out = { ...a };
+  for (const [id, flags] of Object.entries(b || {})) {
+    const cur = { ...(out[id] || {}) };
+    for (const [f, n] of Object.entries(flags || {})) if (!cur[f] || (n.at || '') > (cur[f].at || '')) cur[f] = n;
+    out[id] = cur;
+  }
+  return out;
+}
+
+/** Set a note on entries in a log (returns a new log). */
+export function setNotes(log, entryIds, flag, value, by, now = new Date().toISOString()) {
+  const notes = { ...(log.notes || {}) };
+  for (const id of entryIds) notes[id] = { ...(notes[id] || {}), [flag]: { v: !!value, at: now, by } };
+  return { ...log, notes };
+}
+
+/**
+ * Everyone's entries with a status:
+ *   pending   not in the timesheet yet
+ *   added     in the timesheet (matched to a row, see e.row)
+ *   removed   was added, but the row is no longer in the timesheet. e.removedBy/removedAt say who
+ *             deleted it in the tracker; without them the row was deleted or edited in Excel, or
+ *             lost in a sync conflict. Never re-added automatically.
+ * Archived entries keep their status and get e.archived = true. Deleted entries are left out.
+ */
 export function teamView(logs, info) {
   const marks = new Map();
-  for (const log of logs) for (const m of log.added) if (!marks.has(m.entryId)) marks.set(m.entryId, { ...m, by: log.person });
+  for (const log of logs) for (const m of log.added) {
+    const cur = marks.get(m.entryId);
+    if (!cur || (m.at || '') > (cur.at || '')) marks.set(m.entryId, { ...m, by: log.person });
+  }
+  let notes = {};
+  for (const log of logs) notes = mergeNotes(notes, log.notes);
+  const on = (id, f) => !!notes[id]?.[f]?.v;
   const pool = new Map();
   for (const e of info?.entries || []) {
     const k = rowKey(e.date, e.tag, e.activity, e.hours);
-    pool.set(k, (pool.get(k) || 0) + 1);
+    if (!pool.has(k)) pool.set(k, []);
+    pool.get(k).push(e.row);
   }
-  const all = logs.flatMap((log) => log.entries.map((e) => ({ ...e, person: log.person, owner: ownerOf(log) })));
+  const all = logs.flatMap((log) => log.entries.map((e) => ({ ...e, person: log.person, owner: ownerOf(log) })))
+    .filter((e) => !on(e.id, 'deleted'));
   all.sort((a, b) => (a.date === b.date ? (a.savedAt || '').localeCompare(b.savedAt || '') : a.date.localeCompare(b.date)));
   // Match added entries to timesheet rows one to one.
   for (const e of all) {
+    e.archived = on(e.id, 'archived');
     const m = marks.get(e.id);
     if (!m) { e.status = 'pending'; continue; }
     e.addedBy = m.by;
     e.addedAt = m.at;
-    const k = rowKey(e.date, e.tag, e.activity, e.hours);
-    if ((pool.get(k) || 0) > 0) { pool.set(k, pool.get(k) - 1); e.status = 'added'; } else e.status = 'check';
+    const rows = pool.get(rowKey(e.date, e.tag, e.activity, e.hours));
+    if (rows && rows.length) { e.status = 'added'; e.row = rows.shift(); continue; }
+    e.status = 'removed';
+    const sd = notes[e.id]?.sheetDeleted;
+    if (sd?.v && (sd.at || '') >= (m.at || '')) { e.removedBy = sd.by; e.removedAt = sd.at; }
   }
   return all;
 }
@@ -140,7 +184,7 @@ export function parsePersonLog(text, fileName) {
   return {
     owner: j.owner || `file:${fileName}`,
     timesheet: j.timesheet || '',
-    part: { person: j.person || '', nameAt: j.nameAt || '', entries: j.entries, added },
+    part: { person: j.person || '', nameAt: j.nameAt || '', entries: j.entries, added, notes: j.notes || {} },
   };
 }
 
@@ -148,7 +192,7 @@ export function personLogJson(owner, timesheetName, part) {
   return JSON.stringify({ app: APP, version: 2, kind: 'person-log', owner, timesheet: timesheetName, ...part }, null, 2);
 }
 
-export const emptyPart = () => ({ person: '', nameAt: '', entries: [], added: {} });
+export const emptyPart = () => ({ person: '', nameAt: '', entries: [], added: {}, notes: {} });
 
 /** Combine two versions of one person's section: keep every entry, the latest state of each marker and name. */
 export function mergePart(a = emptyPart(), b = emptyPart()) {
@@ -157,7 +201,7 @@ export function mergePart(a = emptyPart(), b = emptyPart()) {
   const added = { ...(a.added || {}) };
   for (const [id, m] of Object.entries(b.added || {})) if (!added[id] || (m.at || '') > (added[id].at || '')) added[id] = m;
   const useB = (b.nameAt || '') >= (a.nameAt || '');
-  return { person: (useB ? b.person : a.person) || a.person || b.person || '', nameAt: useB ? b.nameAt : a.nameAt, entries: [...entries.values()], added };
+  return { person: (useB ? b.person : a.person) || a.person || b.person || '', nameAt: useB ? b.nameAt : a.nameAt, entries: [...entries.values()], added, notes: mergeNotes(a.notes, b.notes) };
 }
 
 /** True when `part` has something the file's copy is missing (so the file needs putting right). */
@@ -168,6 +212,9 @@ export function partMissingFrom(part, inFile = emptyPart()) {
     const f = inFile.added?.[id];
     if (!f || (m.at || '') > (f.at || '')) return true;
   }
+  for (const [id, flags] of Object.entries(part.notes || {})) {
+    for (const [f, n] of Object.entries(flags)) if ((n.at || '') > (inFile.notes?.[id]?.[f]?.at || '')) return true;
+  }
   return (part.nameAt || '') > (inFile.nameAt || '');
 }
 
@@ -177,6 +224,7 @@ export function docToLogs(doc) {
     app: APP, owner, person: p.person || 'Unnamed', timesheet: doc.timesheet,
     entries: p.entries || [],
     added: Object.entries(p.added || {}).filter(([, m]) => !m.removed).map(([entryId, m]) => ({ entryId, row: m.row, at: m.at })),
+    notes: p.notes || {},
   }));
 }
 
@@ -184,8 +232,8 @@ export function docToLogs(doc) {
 export function logToPart(log, prev = emptyPart(), name, now = new Date().toISOString()) {
   const added = { ...(prev.added || {}) };
   const current = new Set(log.added.map((m) => m.entryId));
-  for (const m of log.added) if (!added[m.entryId] || added[m.entryId].removed) added[m.entryId] = { row: m.row, at: m.at || now };
+  for (const m of log.added) if (!added[m.entryId] || added[m.entryId].removed || (m.at && m.at > (added[m.entryId].at || ''))) added[m.entryId] = { row: m.row, at: m.at || now };
   for (const id of Object.keys(added)) if (!current.has(id) && !added[id].removed) added[id] = { ...added[id], removed: true, at: now };
   const renamed = name && name !== prev.person;
-  return { person: name || prev.person, nameAt: renamed ? now : prev.nameAt || now, entries: log.entries, added };
+  return { person: name || prev.person, nameAt: renamed ? now : prev.nameAt || now, entries: log.entries, added, notes: mergeNotes(prev.notes, log.notes) };
 }

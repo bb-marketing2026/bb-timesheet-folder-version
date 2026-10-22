@@ -39,7 +39,7 @@ export function manual(edition) {
         blocks: [
           { table: [
             ['Area', 'What it is for'],
-            ['How to use the tracker', 'Short steps above the title. Click the heading to collapse it.'],
+            ['How to use / User manual', 'Buttons at the top right. How to use opens short steps under the title. User manual opens this manual.'],
             ['Your name / Client tag', 'Your name for the Team log. The client\'s short name that starts every activity tag, for example RAWCS.'],
             ['Timesheet file', m365 ? 'Sign in, open by link, file details, Insert rows, Save a copy, Undo, Recent clients.' : 'Open timesheet, file details, warnings, Insert rows, Save a copy, Undo, Recent clients.'],
             ['Session', 'Activity tag, Activity, the timer, Start and End.'],
@@ -80,13 +80,14 @@ export function manual(edition) {
           { steps: [
             'Click Refresh to load the latest timesheet and everyone\'s entries. The button flashes "Refresh: new updates" when the app sees changes (it checks every minute).',
             'Filter by person or status.',
-            'Tick entries marked Not added yet and click Add selected to timesheet. They are placed in date order.',
+            'Tick entries and choose an action. Add selected to timesheet puts them in the timesheet in date order. Archive selected hides them from the list and leaves the timesheet as it is (see them under Archived, and use Restore selected to bring them back). Delete selected removes them from the team log for everyone, and deletes their rows from the timesheet if they are in it, after you confirm.',
           ] },
           { table: [
             ['Status', 'Meaning'],
             ['Not added yet', 'In someone\'s log, not in the timesheet.'],
             ['In timesheet', 'Added, and the matching row is in the file.'],
-            ['Check', 'Marked as added but the row was not found. It may have been edited or deleted in Excel. Add it again only if it is really missing.'],
+            ['Removed from timesheet', 'Was added, but the row is no longer in the timesheet. "by [name]" means it was deleted in the tracker. "not found in file" means it was deleted or edited in Excel, or lost in a sync conflict. Add it again only if it should be there, otherwise archive or delete it.'],
+            ['Archived', 'Hidden from Needs action. Shown under Archived in the status filter.'],
           ] },
           { p: m365
             ? 'Two people can save at the same time. If a colleague saved first, the app re-applies your change to their version automatically.'
@@ -100,7 +101,7 @@ export function manual(edition) {
             ['Tool', 'How to use it'],
             ['Insert rows', 'Enter 1 to 500 and click Insert rows when Blank rows left is low (it turns red below 10). Formatting is copied and the Total Hours formula is extended.'],
             ['Save a copy', 'Saves an exact backup named "[timesheet] - Backup - vYYYYMMDD-rHHMM.xlsx". You keep working in the original.'],
-            ['Delete (bin icon)', 'Removes a row after you confirm. Rows below move up.'],
+            ['Delete (bin icon)', 'Removes a row after you confirm. Rows below move up. Its team log entry shows Removed from timesheet for everyone after they press Refresh.'],
             ['Undo', 'Puts the timesheet back exactly as it was before your last change (last 10 changes). Warns you if a colleague saved since.'],
             ['New timesheet', 'Creates a blank Brainbox timesheet for a new client.'],
           ] },

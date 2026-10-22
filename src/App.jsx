@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { readWorkbook, analyse, writeWorkbook, createTimesheet, hoursBetween, sessionsToRows } from './core/timesheet.js';
 import { placeEntriesSafe, deleteEntrySafe, insertRowsSafe, fingerprint } from './core/xlsxPatch.js';
-import { addEntries, addMarkers, removeMarkers, teamView, sessionsToEntries, ownerOf, nameTakenBy } from './core/team.js';
+import { addEntries, addMarkers, removeMarkers, setNotes, teamView, sessionsToEntries, ownerOf, nameTakenBy } from './core/team.js';
 import {
   clock, fmtHours, fmtDate, fmtStamp, localDate, localTime, perthIso, longDate, uid, versionedName, saveBytesAs,
 } from './core/util.js';
@@ -31,7 +31,7 @@ function useNow(active) {
   return now;
 }
 
-const STATUS_LABEL = { pending: 'Not added yet', added: 'In timesheet', check: 'Check' };
+const STATUS_LABEL = { pending: 'Not added yet', added: 'In timesheet', removed: 'Removed from timesheet' };
 
 export default function App() {
   const [source, setSource] = useState(null); // where the timesheet lives (see store/)
@@ -58,6 +58,9 @@ export default function App() {
   const [insertCount, setInsertCount] = useState('50');
   const [showNew, setShowNew] = useState(false);
   const [showManual, setShowManual] = useState(false);
+  // How to use: open on the first visit, then as you left it.
+  const [guideOpen, setGuideOpen] = useState(() => { try { return localStorage.getItem('bbtt.guideOpen') !== '0'; } catch { return true; } });
+  const toggleGuide = (v) => { setGuideOpen(v); try { localStorage.setItem('bbtt.guideOpen', v ? '1' : '0'); } catch { /* ignore */ } };
   const [logs, setLogs] = useState([]);
   const [teamError, setTeamError] = useState('');
   const [teamFilter, setTeamFilter] = useState({ person: 'all', status: 'open' });
@@ -331,10 +334,20 @@ export default function App() {
       return { ...out, label: `Added ${n} row${n > 1 ? 's' : ''} (${hrs} hrs)`, extra: { entryIds: entries.map((e) => e.id) } };
     });
     if (team) {
-      const mine = await team.readMine();
-      await team.writeMine(addMarkers(mine, res.placed.map((p) => ({ entryId: p.id, row: p.row, at: new Date().toISOString() }))));
+      let mine = await team.readMine();
+      mine = addMarkers(mine, res.placed.map((p) => ({ entryId: p.id, row: p.row, at: new Date().toISOString() })));
+      // Re-adding an entry that was removed or archived makes it current again.
+      const reAdded = entries.filter((e) => e.status === 'removed' || e.archived).map((e) => e.id);
+      if (reAdded.length) { mine = setNotes(mine, reAdded, 'sheetDeleted', false, myName); mine = setNotes(mine, reAdded, 'archived', false, myName); }
+      await team.writeMine(mine);
     }
     return res;
+  }
+
+  // Record a note (archived, deleted, sheetDeleted) on team entries in my log. Everyone sees the latest note.
+  async function noteEntries(ids, flag, value) {
+    if (!team || !ids.length) return;
+    await team.writeMine(setNotes(await team.readMine(), ids, flag, value, myName));
   }
 
   // mode 'add': save to my team log, then into the timesheet. mode 'log': team log only.
@@ -381,10 +394,47 @@ export default function App() {
 
   const view = useMemo(() => teamView(logs, info), [logs, info]);
   const people = useMemo(() => logs.map((l) => ({ owner: ownerOf(l), name: l.person || 'Unnamed' })).sort((a, b) => a.name.localeCompare(b.name)), [logs]);
-  const filtered = view.filter((e) => (teamFilter.person === 'all' || e.owner === teamFilter.person)
-    && (teamFilter.status === 'all' || (teamFilter.status === 'open' ? e.status !== 'added' : e.status === teamFilter.status)));
-  const chosen = view.filter((e) => selected.has(e.id) && e.status !== 'added');
-  const counts = view.reduce((c, e) => ({ ...c, [e.status]: (c[e.status] || 0) + 1 }), {});
+  const matchStatus = (e, f) => (f === 'all' ? true : f === 'archived' ? e.archived : !e.archived && (f === 'open' ? e.status !== 'added' : e.status === f));
+  const filtered = view.filter((e) => (teamFilter.person === 'all' || e.owner === teamFilter.person) && matchStatus(e, teamFilter.status));
+  const picked = filtered.filter((e) => selected.has(e.id));
+  const chosen = picked.filter((e) => e.status !== 'added'); // can be added to the timesheet
+  const countOf = (f) => view.filter((e) => (teamFilter.person === 'all' || e.owner === teamFilter.person) && matchStatus(e, f)).length;
+  const viewingArchived = teamFilter.status === 'archived';
+
+  // Archive (or restore) selected entries: hidden from the list, the timesheet is not touched.
+  async function archiveSelected(value) {
+    if (!picked.length) return;
+    await guarded(async () => {
+      await noteEntries(picked.map((e) => e.id), 'archived', value);
+      setSelected(new Set());
+      await loadTeam(source);
+      flash('ok', value
+        ? `Archived ${picked.length} entr${picked.length > 1 ? 'ies' : 'y'}. See ${picked.length > 1 ? 'them' : 'it'} under Archived in the status filter.`
+        : `Restored ${picked.length} entr${picked.length > 1 ? 'ies' : 'y'} from the archive.`);
+    });
+  }
+
+  // Delete selected entries from the team log. Rows of entries that are in the timesheet are deleted there too.
+  async function deleteSelected() {
+    if (!picked.length) return;
+    const inSheet = picked.filter((e) => e.status === 'added' && e.row).sort((a, b) => b.row - a.row);
+    await guarded(async () => {
+      if (inSheet.length) {
+        await commit(async (bytes) => {
+          let out = bytes;
+          // Bottom row first so row numbers above stay valid. Each row is checked against the entry first.
+          for (const e of inSheet) {
+            out = (await deleteEntrySafe(out, file.sheet, { row: e.row, tag: e.tag, activity: e.activity, hours: e.hours })).bytes;
+          }
+          return { bytes: out, label: inSheet.length > 1 ? `Deleted ${inSheet.length} rows with their team log entries` : `Deleted row ${inSheet[0].row} with its team log entry`, extra: { deletedIds: picked.map((e) => e.id) } };
+        });
+      }
+      await noteEntries(picked.map((e) => e.id), 'deleted', true);
+      setSelected(new Set());
+      await loadTeam(source);
+      flash('ok', `Deleted ${picked.length} entr${picked.length > 1 ? 'ies' : 'y'} from the team log${inSheet.length ? ` and ${inSheet.length} row${inSheet.length > 1 ? 's' : ''} from the timesheet` : ''}.`, inSheet.length ? { undo: true } : {});
+    });
+  }
 
   async function addSelected() {
     if (!chosen.length) return;
@@ -397,13 +447,16 @@ export default function App() {
   }
 
   async function deleteRow(entry) {
+    // Team log entries that point at this row are marked "Removed from timesheet" (synced on Refresh).
+    const linked = view.filter((e) => e.status === 'added' && e.row === entry.row).map((e) => e.id);
     await guarded(async () => {
       await commit(async (bytes) => {
         const { bytes: out } = await deleteEntrySafe(bytes, file.sheet, entry);
-        return { bytes: out, label: `Deleted row ${entry.row} (${fmtDate(entry.date)}, ${entry.tag}, ${fmtHours(entry.hours)} hrs)` };
+        return { bytes: out, label: `Deleted row ${entry.row} (${fmtDate(entry.date)}, ${entry.tag}, ${fmtHours(entry.hours)} hrs)`, extra: { sheetDeletedIds: linked } };
       });
+      await noteEntries(linked, 'sheetDeleted', true);
       await loadTeam(source);
-      flash('ok', `Deleted row ${entry.row}. Rows below moved up one.`, { undo: true });
+      flash('ok', `Deleted row ${entry.row}. Rows below moved up one.${linked.length ? ' Its team log entry now shows "Removed from timesheet" for everyone after they press Refresh.' : ''}`, { undo: true });
     });
   }
 
@@ -434,9 +487,12 @@ export default function App() {
       const { bytes: current, version } = await source.read();
       if (!force && (await fingerprint(current)) !== step.afterHash) { setConfirm({ kind: 'undo' }); return; }
       await source.write(step.before, version);
-      if (team && step.entryIds?.length) {
-        const mine = await team.readMine();
-        await team.writeMine(removeMarkers(mine, step.entryIds));
+      if (team && (step.entryIds?.length || step.sheetDeletedIds?.length || step.deletedIds?.length)) {
+        let mine = await team.readMine();
+        if (step.entryIds?.length) mine = removeMarkers(mine, step.entryIds);
+        if (step.sheetDeletedIds?.length) mine = setNotes(mine, step.sheetDeletedIds, 'sheetDeleted', false, myName);
+        if (step.deletedIds?.length) mine = setNotes(mine, step.deletedIds, 'deleted', false, myName);
+        await team.writeMine(mine);
       }
       setHistory(await popHistory(source.id));
       setConfirm(null);
@@ -497,14 +553,15 @@ export default function App() {
         <span>Internal Brainbox use only. Do not forward, publish or distribute outside the group.</span>
       </div>
     <div className="app">
-      <Guide edition={store.kind} onManual={() => setShowManual(true)} />
       <header className="bar">
         <div className="brand"><span className="dot" />Brainbox Timesheet Tracker{store.kind === 'm365' && <span className="tagline">Microsoft 365</span>}</div>
         <div className="row gap">
           {running && <div className="live"><span className="pulse" />{clock(now - new Date(timer.start))}</div>}
+          <button className={`ghost small ${guideOpen ? 'on' : ''}`} aria-expanded={guideOpen} onClick={() => toggleGuide(!guideOpen)}>How to use</button>
           <button className="ghost small" onClick={() => setShowManual(true)}>User manual</button>
         </div>
       </header>
+      {guideOpen && <Guide edition={store.kind} onManual={() => setShowManual(true)} onClose={() => toggleGuide(false)} />}
 
       {/* Your name: shown to colleagues in the Team log, never written into the timesheet. */}
       <div className="namebar">
@@ -777,11 +834,12 @@ export default function App() {
                       {people.map((p) => <option key={p.owner} value={p.owner}>{p.name}{p.owner === myOwner ? ' (you)' : ''}</option>)}
                     </select>
                     <select aria-label="Status" value={teamFilter.status} onChange={(e) => setTeamFilter((f) => ({ ...f, status: e.target.value }))}>
-                      <option value="open">Not added or to check ({(counts.pending || 0) + (counts.check || 0)})</option>
-                      <option value="pending">Not added yet ({counts.pending || 0})</option>
-                      <option value="check">Check ({counts.check || 0})</option>
-                      <option value="added">In timesheet ({counts.added || 0})</option>
-                      <option value="all">All ({view.length})</option>
+                      <option value="open">Needs action ({countOf('open')})</option>
+                      <option value="pending">Not added yet ({countOf('pending')})</option>
+                      <option value="removed">Removed from timesheet ({countOf('removed')})</option>
+                      <option value="added">In timesheet ({countOf('added')})</option>
+                      <option value="archived">Archived ({countOf('archived')})</option>
+                      <option value="all">All ({countOf('all')})</option>
                     </select>
                   </div>
                   {filtered.length === 0 ? (
@@ -792,28 +850,51 @@ export default function App() {
                       <tbody>
                         {filtered.slice(0, 60).map((e) => (
                           <tr key={e.id} className={selected.has(e.id) ? 'sel' : ''}>
-                            <td>{e.status !== 'added' && <input type="checkbox" aria-label={`Select ${e.activity}`} checked={selected.has(e.id)} onChange={() => toggle(e.id)} />}</td>
+                            <td><input type="checkbox" aria-label={`Select ${e.activity}`} checked={selected.has(e.id)} onChange={() => toggle(e.id)} /></td>
                             <td>{e.person}</td>
                             <td>{fmtDate(e.date)}</td>
                             <td><strong>{e.tag}</strong><br />{e.activity}</td>
                             <td>{fmtHours(e.hours)}</td>
                             <td>
-                              <span className={`pill ${e.status}`} title={e.status === 'check' ? 'Marked as added, but no matching row was found. It may have been edited or deleted in Excel, or lost in a sync conflict. Add it again only if it is really missing.' : e.addedBy ? `Added by ${e.addedBy}` : ''}>{STATUS_LABEL[e.status]}</span>
+                              <span className={`pill ${e.status}`} title={e.status === 'removed'
+                                ? (e.removedBy ? `Deleted from the timesheet by ${e.removedBy}, ${fmtStamp(Date.parse(e.removedAt))}.` : 'The row is no longer in the timesheet. It may have been deleted or edited in Excel, or lost in a sync conflict.')
+                                : e.addedBy ? `Added by ${e.addedBy}` : ''}>{STATUS_LABEL[e.status]}</span>
+                              {e.status === 'removed' && <span className="pill-note">{e.removedBy ? `by ${e.removedBy}` : 'not found in file'}</span>}
+                              {e.archived && <span className="pill archived">Archived</span>}
                             </td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   )}
-                  <div className="team-foot">
-                    <button className="small" onClick={addSelected} disabled={busy || !chosen.length}>
-                      Add selected to timesheet{chosen.length ? ` (${chosen.length}, ${fmtHours(chosen.reduce((s, e) => s + e.hours, 0))} hrs)` : ''}
-                    </button>
-                    {filtered.some((e) => e.status === 'pending') && (
-                      <button className="link dark" onClick={() => setSelected(new Set(filtered.filter((e) => e.status === 'pending').map((e) => e.id)))}>Select all not added</button>
-                    )}
-                  </div>
-                  <p className="hint">Entries are placed in date order. Names stay in the team log and are never written into the timesheet.{team.folderLabel ? ` Logs are kept in ${team.folderLabel}.` : ''}</p>
+                  {confirm?.kind === 'team-delete' ? (
+                    <div className="confirm team-confirm">
+                      <span>
+                        Delete {picked.length} entr{picked.length > 1 ? 'ies' : 'y'} from the team log for everyone?
+                        {picked.some((e) => e.status === 'added') && ` ${picked.filter((e) => e.status === 'added').length} of them ${picked.filter((e) => e.status === 'added').length > 1 ? 'are' : 'is'} in the timesheet and the row${picked.filter((e) => e.status === 'added').length > 1 ? 's' : ''} will be deleted there too.`}
+                        {' '}To keep them, use Archive instead.
+                      </span>
+                      <div className="row gap">
+                        <button className="danger small" onClick={deleteSelected} disabled={busy}>Delete</button>
+                        <button className="ghost small" onClick={() => setConfirm(null)}>Cancel</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="team-foot">
+                      <button className="small" onClick={addSelected} disabled={busy || !chosen.length}>
+                        Add selected to timesheet{chosen.length ? ` (${chosen.length}, ${fmtHours(chosen.reduce((s, e) => s + e.hours, 0))} hrs)` : ''}
+                      </button>
+                      <button className="ghost small" onClick={() => archiveSelected(!viewingArchived)} disabled={busy || !picked.length}>
+                        {viewingArchived ? 'Restore selected' : 'Archive selected'}
+                      </button>
+                      <button className="ghost small danger-text" onClick={() => setConfirm({ kind: 'team-delete' })} disabled={busy || !picked.length}>Delete selected</button>
+                      {filtered.some((e) => e.status !== 'added') && (
+                        <button className="link dark" onClick={() => setSelected(new Set(filtered.filter((e) => e.status !== 'added').map((e) => e.id)))}>Select all needing action</button>
+                      )}
+                      {picked.length > 0 && <button className="link dark" onClick={() => setSelected(new Set())}>Clear</button>}
+                    </div>
+                  )}
+                  <p className="hint">Add puts entries into the timesheet in date order. Archive hides entries and leaves the timesheet as it is. Delete removes entries for everyone, and their rows if they are in the timesheet. Press Refresh to see changes made by colleagues. Names are never written into the timesheet.{team.folderLabel ? ` Logs are kept in ${team.folderLabel}.` : ''}</p>
                 </>
               )}
             </div>

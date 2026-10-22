@@ -12,7 +12,7 @@ There is a separate Microsoft 365 edition, which saves directly through SharePoi
 |---|---|
 | Open timesheet | Choose the client timesheet file (.xlsx). The app saves straight back into it. Recent clients are remembered. |
 | Connect team log | Once per timesheet, in the Team log panel. The folder picker opens where the timesheet is saved. Click **Select folder**, then **Edit files**. The app checks it is the right folder, then keeps everyone's logs in a **Timesheet Logs** folder beside the timesheet. |
-| How to use the tracker / User manual | Short guide above the title (click to collapse). **User manual** (top right) opens the full manual, which can be printed. The same manual is in `MANUAL.md`. |
+| How to use / User manual | Buttons at the top right. **How to use** opens short steps under the title. **User manual** opens the full manual, which can be printed. The same manual is in `MANUAL.md`. |
 | Client tag (beside your name) | The client's short name, for example `RAWCS`, detected from the timesheet and saved per timesheet. Pick a generic activity tag such as `Content Planning` and the app writes `RAWCS Content Planning`. Click **Change** to edit it, or leave it empty for none. |
 | Your name (under the title) | Type your name and click **Save**. There is no default. Colleagues see it next to your entries in the Team log after they press **Refresh**. It is never written into the timesheet. Click **Change** to update it. Your existing log keeps working under the new name. |
 | Activity tag / Activity | Written to **Project Description** and **Activities**. Tags are suggested from the file. |
@@ -21,11 +21,11 @@ There is a separate Microsoft 365 edition, which saves directly through SharePoi
 | Add hours to the file | Saves your sessions to your team log first, then adds them to the timesheet in date order. |
 | Save to team log only | Saves to your team log without touching the timesheet, so someone else can add it later. |
 | Add another session | Clears the timer for the next task. |
-| Team log | Everyone's entries for this timesheet, by person and status. Select entries and click **Add selected to timesheet**. |
+| Team log | Everyone's entries for this timesheet, by person and status. Select entries, then **Add selected to timesheet**, **Archive selected** (hide, timesheet unchanged; **Restore selected** under Archived) or **Delete selected** (removes them for everyone, and their rows if they are in the timesheet, after you confirm). |
 | Refresh | Re-reads the timesheet and everyone's logs. The button flashes "new updates" when the app sees changes (checked every minute). |
 | Insert rows | Inserts 1 to 500 blank, formatted rows above Total Hours and extends the total formula. |
 | Save a copy | Saves an exact backup named `[file] - Backup - vYYYYMMDD-rHHMM.xlsx` (Perth time). |
-| Delete (bin icon) | Removes a row from the file after you confirm. Rows below move up. |
+| Delete (bin icon) | Removes a row from the file after you confirm. Rows below move up. Its team log entry shows **Removed from timesheet** for everyone after they press **Refresh**. |
 | Undo | Restores the file exactly as it was before your last change (last 10 changes, kept in this browser). |
 
 Team log statuses:
@@ -34,7 +34,8 @@ Team log statuses:
 |---|---|
 | Not added yet | In someone's log, not in the timesheet. |
 | In timesheet | Added, and a matching row is in the file. |
-| Check | Marked as added but no matching row was found. It may have been edited or deleted in Excel, or lost in a OneDrive conflict. Add it again only if it really is missing. |
+| Removed from timesheet | Was added, but the row is no longer in the file. "by [name]" means it was deleted in the tracker; "not found in file" means it was deleted or edited in Excel, or lost in a OneDrive conflict. Add it again, archive it or delete it. |
+| Archived | Hidden from Needs action, shown under **Archived**. |
 
 ## Files the app creates
 
@@ -99,7 +100,7 @@ Open http://localhost:5173 in Chrome or Edge.
 ## Known issues and limits
 
 - **Chrome or Edge only for the full app.** Firefox and Safari can open one file and download updated copies, with no team log.
-- **OneDrive sync delay.** Each computer saves its own copy and OneDrive takes seconds to minutes to sync. Two saves to the same timesheet inside that gap can still produce a OneDrive conflict copy (for example `... RAWCS-DESKTOP-ABC.xlsx`). The app warns when it sees one, the Team log "Check" status shows rows that went missing, and each person's log restores itself. The Microsoft 365 edition removes this risk.
+- **OneDrive sync delay.** Each computer saves its own copy and OneDrive takes seconds to minutes to sync. Two saves to the same timesheet inside that gap can still produce a OneDrive conflict copy (for example `... RAWCS-DESKTOP-ABC.xlsx`). The app warns when it sees one, the Team log "Removed from timesheet" status shows rows that went missing, and each person's log restores itself. The Microsoft 365 edition removes this risk.
 - **Close the timesheet in Excel before saving from the app.** Windows locks open files.
 - **Permission prompt.** Chrome asks to allow editing of the timesheet (and its folder, once the team log is connected) once per browser session.
 - **Without Connect team log**, the timesheet works fully. Only the Team log and the folder warnings are off.
