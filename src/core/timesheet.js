@@ -4,15 +4,22 @@ import ExcelJS from 'exceljs';
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
   'August', 'September', 'October', 'November', 'December'];
 
-// Header text in the Brainbox template, matched loosely so small wording changes still work.
+// Header text, matched loosely so the different Brainbox timesheet layouts all work
+// (for example RAWCS: Month, Date Log, Project Description, Activities, Total Hours, EOD Log;
+// Weld East: Month, Date Log, Day, Project Description, Activities, Total Hours, Notes).
+// Columns can be in any order; only Total Hours plus Activities or Project Description are required.
 const HEADER_MATCHERS = {
   month: /^month$/i,
+  day: /^(day|weekday|day of week)$/i,
   date: /^date/i,
-  tag: /project description|activity tag|^tag$|category/i,
-  activity: /^activit|^task|description of work/i,
-  hours: /total hours|^hours$/i,
-  eod: /eod/i,
+  tag: /project description|activity tag|^tag$|category|^(project|service|task type|work type)$/i,
+  activity: /^activit|^tasks?$|^task description|description of work|^(description|details|work done)$/i,
+  hours: /total hours|^(hours|hrs|time spent|duration)$/i,
+  eod: /eod|^(notes?|comments?|remarks?)$/i,
 };
+// Columns whose content decides whether a row is used. Month, Date and Day are left out because
+// some templates fill them in ahead of time (Weld East has weekday names in its blank rows).
+const CONTENT_COLS = ['tag', 'activity', 'hours', 'eod'];
 
 export const AU_DATE = 'dd/mm/yyyy';
 
@@ -75,14 +82,19 @@ function findHeader(ws) {
   return null;
 }
 
-function findTotalRow(ws, headerRow) {
+function findTotalRow(ws, headerRow, hoursCol) {
   for (let r = headerRow + 1; r <= ws.rowCount; r++) {
     const row = ws.getRow(r);
     let found = false;
     row.eachCell({ includeEmpty: false }, (cell) => {
-      if (/^\s*total hours\s*$/i.test(cellText(cell))) found = true;
+      if (/^\s*total(\s+hours|\s+hrs)?\s*:?\s*$/i.test(cellText(cell))) found = true;
     });
     if (found) return r;
+  }
+  // No label: the first row below the header whose hours cell adds up the column.
+  for (let r = headerRow + 1; r <= ws.rowCount; r++) {
+    const v = ws.getRow(r).getCell(hoursCol).value;
+    if (v && typeof v === 'object' && /^\s*(SUM|SUBTOTAL)\(/i.test(v.formula || v.sharedFormula || '')) return r;
   }
   return null;
 }
@@ -122,9 +134,9 @@ export function analyse(wb, preferredSheet) {
   const ws = wb.getWorksheet(sheetName);
   const { headerRow, cols } = findHeader(ws);
   const firstDataRow = headerRow + 1;
-  const totalRow = findTotalRow(ws, headerRow);
+  const totalRow = findTotalRow(ws, headerRow, cols.hours);
   const lastDataRow = totalRow ? totalRow - 1 : ws.rowCount;
-  const dataCols = Object.values(cols);
+  const dataCols = CONTENT_COLS.map((k) => cols[k]).filter(Boolean);
 
   let lastUsedRow = headerRow;
   for (let r = firstDataRow; r <= lastDataRow; r++) {

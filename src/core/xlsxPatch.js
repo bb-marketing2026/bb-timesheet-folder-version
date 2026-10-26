@@ -250,6 +250,17 @@ function excelSerial(dateKey, date1904) {
 }
 
 const round2 = (n) => Math.round(n * 100) / 100;
+const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const weekday = (dateKey) => { const [y, m, d] = dateKey.split('-').map(Number); return DAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]; };
+
+// A Day column worked out by formula (for example =TEXT(C10,"dddd")) stays where it is when rows
+// move, because each formula follows the date in its own row. Typed Day values move with their row.
+function formulaDayCol(sheet, info, fromRow, toRow) {
+  const c = info.cols.day;
+  if (!c) return null;
+  for (let r = fromRow; r <= toRow; r++) if (sheet.hasFormula(r, c)) return c;
+  return null;
+}
 
 async function savePackage(pkg, sheet, styles) {
   const { zip } = pkg;
@@ -342,11 +353,12 @@ export async function placeEntriesSafe(bytes, sheetName, entries) {
   }
   const startRow = info.firstDataRow + minPos;
 
-  // Existing rows that will move must not hold formulas.
+  // Existing rows that will move must not hold formulas (a formula Day column is fine, it stays put).
   const moving = units.slice(minPos);
+  const keepCol = formulaDayCol(sheet, info, info.firstDataRow, info.lastUsedRow + K);
   for (const u of moving) {
     for (let c = lo; c <= hi; c++) {
-      if (sheet.hasFormula(u.row, c)) throw new Error(`Row ${u.row} contains a formula, so the app will not move it. Add this entry in Excel instead.`);
+      if (c !== keepCol && sheet.hasFormula(u.row, c)) throw new Error(`Row ${u.row} contains a formula, so the app will not move it. Add this entry in Excel instead.`);
     }
   }
   // Snapshot the rows that move before anything is overwritten.
@@ -370,7 +382,7 @@ export async function placeEntriesSafe(bytes, sheetName, entries) {
       if (el.unit.row !== r) sheet.setHeight(r, heights.get(el.unit.row));
       for (let c = lo; c <= hi; c++) {
         const src = cells.get(c);
-        if (el.unit.row === r) continue; // not moving
+        if (el.unit.row === r || c === keepCol) continue; // not moving, or a Day formula that stays put
         sheet.put(r, c, src && src.inner
           ? { kind: 'raw', rawType: src.t, rawInner: src.inner, style: src.s }
           : { kind: 'blank', style: src ? src.s : sheet.styleOf(r, c) });
@@ -392,6 +404,10 @@ export async function placeEntriesSafe(bytes, sheetName, entries) {
           ? { kind: 'number', value: excelSerial(item.date, pkg.date1904), style }
           : { kind: 'blank', style });
       }
+      // Day: the weekday on the first row of each day, like the date. Left alone if it is a formula.
+      if (cols.day && !sheet.hasFormula(r, cols.day)) sheet.put(r, cols.day, firstOfDay
+        ? { kind: 'text', value: weekday(item.date), style: styleFor(cols.day) }
+        : { kind: 'blank', style: styleFor(cols.day) });
       if (cols.tag) sheet.put(r, cols.tag, { kind: 'text', value: item.tag, style: styleFor(cols.tag) });
       if (cols.activity) sheet.put(r, cols.activity, { kind: 'text', value: item.activity, style: styleFor(cols.activity) });
       sheet.put(r, cols.hours, { kind: 'number', value: hours, style: styleFor(cols.hours) });
@@ -444,9 +460,10 @@ export async function deleteEntrySafe(bytes, sheetName, expected) {
   const R = expected.row;
   const last = info.lastUsedRow;
 
+  const keepCol = formulaDayCol(sheet, info, info.firstDataRow, last);
   for (let r = R; r <= last; r++) {
     for (let c = lo; c <= hi; c++) {
-      if (sheet.hasFormula(r, c)) throw new Error(`Row ${r} contains a formula, so the app will not move it. Delete this row in Excel instead.`);
+      if (c !== keepCol && sheet.hasFormula(r, c)) throw new Error(`Row ${r} contains a formula, so the app will not move it. Delete this row in Excel instead.`);
     }
   }
 
@@ -460,6 +477,7 @@ export async function deleteEntrySafe(bytes, sheetName, expected) {
     };
     if (mc) copy(mc);
     copy(dc);
+    if (info.cols.day && info.cols.day !== keepCol) copy(info.cols.day);
   }
 
   // Move every cell in the data block up one row, then clear the old last row.
@@ -467,13 +485,14 @@ export async function deleteEntrySafe(bytes, sheetName, expected) {
   sheet.setHeight(last, null);
   for (let r = R; r < last; r++) {
     for (let c = lo; c <= hi; c++) {
+      if (c === keepCol) continue;
       const src = sheet.cell(r + 1, c);
       sheet.put(r, c, src && src.inner
         ? { kind: 'raw', rawType: getAttr(src.attrs, 't'), rawInner: src.inner, style: getAttr(src.attrs, 's') }
         : { kind: 'blank', style: src ? getAttr(src.attrs, 's') : sheet.styleOf(r, c) });
     }
   }
-  for (let c = lo; c <= hi; c++) sheet.put(last, c, { kind: 'blank', style: sheet.styleOf(last, c) });
+  for (let c = lo; c <= hi; c++) if (c !== keepCol) sheet.put(last, c, { kind: 'blank', style: sheet.styleOf(last, c) });
 
   dateColumnToAu(sheet, styles, info);
   if (info.totalRow) sheet.setCachedValue(info.totalRow, info.cols.hours, round2(info.total - current.hours));
@@ -544,7 +563,12 @@ export async function insertRowsSafe(bytes, sheetName, count) {
   if (/<tableParts\b/.test(pkg.sheetXml) || /relationships\/table"/.test(rels)) blockers.push('a formatted table');
   if (/<drawing\b|<legacyDrawing\b/.test(pkg.sheetXml) || /relationships\/(drawing|vmlDrawing|comments)"/.test(rels)) blockers.push('charts, images or comments');
   if (/relationships\/pivotTable"/.test(rels) || Object.keys(zip.files).some((n) => n.startsWith('xl/pivotCache'))) blockers.push('a pivot table');
-  if (/<extLst>[\s\S]*xm:sqref/.test(pkg.sheetXml)) blockers.push('advanced conditional formatting or validation');
+  // Drop-down lists and conditional formats stored as Excel 2010 extensions are shifted below;
+  // anything else in the extensions that refers to cells (for example sparklines) is left to Excel.
+  const extRest = (pkg.sheetXml.match(/<extLst>[\s\S]*<\/extLst>/) || [''])[0]
+    .replace(/<x14:dataValidations\b[\s\S]*?<\/x14:dataValidations>/g, '')
+    .replace(/<x14:conditionalFormattings\b[\s\S]*?<\/x14:conditionalFormattings>/g, '');
+  if (/xm:sqref|<xm:f>/.test(extRest)) blockers.push('sparklines or other Excel extensions');
   if (/<f\b[^>]*\bt="(shared|array)"[^>]*\bref="([^"]*)"/.test(pkg.sheetXml)) {
     for (const m of pkg.sheetXml.matchAll(/<f\b[^>]*\bref="([A-Z]+)(\d+):([A-Z]+)(\d+)"/g)) {
       if (Number(m[2]) < P && Number(m[4]) >= P) { blockers.push('a shared formula across the Total row'); break; }
@@ -606,6 +630,9 @@ export async function insertRowsSafe(bytes, sheetName, count) {
     x = shiftAttrs(x, 'selection', 'activeCell', (v) => shiftSqref(v, ctx));
     x = shiftAttrs(x, 'pane', 'topLeftCell', (v) => shiftSqref(v, ctx));
     x = x.replace(/<(formula|formula1|formula2)>([\s\S]*?)<\/\1>/g, (m, t, f) => `<${t}>${esc(shiftFormula(unesc(f), ctx))}</${t}>`);
+    // Excel 2010 extensions: drop-down lists (x14:dataValidation) and conditional formats.
+    x = x.replace(/<xm:sqref>([^<]*)<\/xm:sqref>/g, (m, v) => `<xm:sqref>${shiftSqref(v, ctx)}</xm:sqref>`);
+    x = x.replace(/<xm:f>([^<]*)<\/xm:f>/g, (m, f) => `<xm:f>${esc(shiftFormula(unesc(f), ctx))}</xm:f>`);
     x = x.replace(/(<rowBreaks\b[\s\S]*?<\/rowBreaks>)/, (blk) => blk.replace(/<brk\b([^>]*?)\bid="(\d+)"/g, (m, a, id) => `<brk${a}id="${Number(id) >= P - 1 ? Number(id) + N : id}"`));
     return x;
   };

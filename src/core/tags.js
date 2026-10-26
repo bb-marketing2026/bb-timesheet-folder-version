@@ -4,17 +4,22 @@
 
 const lc = (s) => String(s || '').trim().toLowerCase();
 
-/** Best guess from the timesheet: the client's short name, if most existing tags start with it. */
+/**
+ * Best guess from the timesheet: the client's short name, only if most existing tags start with it.
+ * Candidates come from the Department / Client cell: "RAWCS - Rotary Australia ..." gives "RAWCS",
+ * plus the initials and first word of the name. Timesheets whose tags do not start with the client
+ * (for example Weld East: "Website Management") get no client tag.
+ */
 export function detectClientTag(info) {
-  const fromClient = String(info?.client || '').split(' - ')[0].trim();
+  const client = String(info?.client || '').trim();
   const tags = info?.tags || [];
-  if (!tags.length) return fromClient.length <= 20 ? fromClient : '';
+  const short = client.split(' - ')[0].trim();
+  const words = client.replace(/[^A-Za-z0-9 ]+/g, ' ').split(/\s+/).filter(Boolean);
+  const initials = words.filter((w) => /^[A-Z]/.test(w)).map((w) => w[0]).join('');
+  const candidates = [...new Set([short, initials, words[0]].filter((c) => c && c.length <= 20))];
+  if (!tags.length) return short.length <= 12 && !short.includes(' ') ? short : '';
   const starting = (p) => tags.filter((t) => lc(t).startsWith(`${lc(p)} `)).length;
-  if (fromClient && starting(fromClient) >= Math.ceil(tags.length / 2)) return fromClient;
-  const counts = new Map();
-  for (const t of tags) { const w = t.trim().split(/\s+/)[0]; if (w && t.trim().includes(' ')) counts.set(w, (counts.get(w) || 0) + 1); }
-  const [best, n] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0] || [];
-  return best && n >= Math.ceil(tags.length / 2) ? best : '';
+  return candidates.find((c) => starting(c) >= Math.ceil(tags.length / 2)) || '';
 }
 
 /** "RAWCS Content Hub" -> "Content Hub" when the client tag is "RAWCS". */

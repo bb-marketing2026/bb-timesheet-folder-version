@@ -603,7 +603,7 @@ export default function App() {
         <div className="namebar-client">
           {!file ? (
             <div className="namebar-show"><span>Client tag: <span className="muted">open a timesheet</span></span></div>
-          ) : clientEdit || (!clientTag && clientAuto) ? (
+          ) : clientEdit || (!clientTag && clientAuto && !(info?.tags?.length)) ? (
             <div className="namebar-edit">
               <label htmlFor="client-tag">Client tag</label>
               <div className="row gap nowrap">
@@ -616,7 +616,7 @@ export default function App() {
             </div>
           ) : (
             <div className="namebar-show">
-              <span>Client tag: <strong>{clientTag || 'none'}</strong>{clientAuto && clientTag && <span className="muted"> (from the timesheet)</span>}</span>
+              <span>Client tag: <strong>{clientTag || 'none'}</strong>{clientAuto && <span className="muted">{clientTag ? ' (from the timesheet)' : ' (not used in this timesheet)'}</span>}</span>
               <button className="link dark" onClick={() => { setClientDraft(clientTag); setClientEdit(true); }}>Change</button>
             </div>
           )}

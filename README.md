@@ -37,6 +37,25 @@ Team log statuses:
 | Removed from timesheet | Was added, but the row is no longer in the file. "by [name]" means it was deleted in the tracker; "not found in file" means it was deleted or edited in Excel, or lost in a OneDrive conflict. Add it again, archive it or delete it. |
 | Archived | Hidden from Needs action, shown under **Archived**. |
 
+## Timesheet layouts the tracker reads
+
+The header row is found by its labels, so columns can be in any order. Tested with the RAWCS layout (Month, Date Log, Project Description, Activities, Total Hours, EOD Log) and the Weld East layout (Month, Date Log, Day, Project Description, Activities, Total Hours, Notes, with a Projects Summary below the total).
+
+| Column | Labels recognised | Written by the tracker |
+|---|---|---|
+| Month | Month | Month name, first row of each day |
+| Date | Date Log, Date | Date (DD/MM/YYYY), first row of each day |
+| Day (optional) | Day, Weekday | Weekday with the date; a Day formula is left to work it out |
+| Tag | Project Description, Activity Tag, Category, Project, Service | Client tag + activity tag |
+| Activity | Activities, Task(s), Description, Details | What you did |
+| Hours (required) | Total Hours, Hours, Hrs, Time Spent, Duration | Decimal hours |
+| Notes (optional) | EOD Log, Notes, Comments, Remarks | Left blank |
+
+- The Total Hours row is found by its label or by the SUM formula under the hours column.
+- Weekday names typed into blank rows in advance (as in Weld East) do not count as used rows.
+- Drop-down lists (such as the Day list) and anything below Total Hours move correctly when rows are inserted.
+- The client tag is only used when most tags in the timesheet start with the client's short name. Weld East tags (for example `Website Management`) do not, so it shows "none".
+
 ## Files the app creates
 
 ```

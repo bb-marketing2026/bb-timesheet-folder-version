@@ -8,7 +8,23 @@ It times your work for a client with Start and End, then writes the hours into t
 
 This edition opens timesheets saved on your computer or in a OneDrive folder synced to it. Use Chrome or Edge.
 
-## 2. First-time setup (about 2 minutes)
+## 2. Timesheet layouts the tracker reads
+
+The tracker finds the header row by its labels, so columns can be in any order and other Brainbox layouts work too (for example RAWCS and Weld East).
+
+| Column | Labels it recognises | What the tracker writes |
+|---|---|---|
+| Month | Month | Month name, on the first row of each day |
+| Date | Date Log, Date | Date (DD/MM/YYYY), on the first row of each day |
+| Day (optional) | Day, Weekday | Weekday name with the date. A Day formula is left to work it out. |
+| Tag | Project Description, Activity Tag, Category, Project, Service | Client tag and activity tag, for example RAWCS Content Planning |
+| Activity | Activities, Task, Tasks, Description, Details | What you did |
+| Hours (required) | Total Hours, Hours, Hrs, Time Spent, Duration | Decimal hours |
+| Notes (optional) | EOD Log, Notes, Comments, Remarks | Left blank for you |
+
+The Total Hours row is found by its label (Total Hours, Total) or by the SUM formula under the hours column. Weekday names typed into blank rows in advance are ignored when counting blank rows. Tables, notes and summaries below Total Hours (such as Projects Summary) move down when rows are inserted.
+
+## 3. First-time setup (about 2 minutes)
 
 1. Open the tracker link in Chrome or Edge.
 2. Under the title, type Your name and click Save. Colleagues see this name in the Team log.
@@ -16,7 +32,7 @@ This edition opens timesheets saved on your computer or in a OneDrive folder syn
 4. Check the Client tag beside your name (for example RAWCS). Click Change if it is wrong.
 5. In the Team log panel, click Connect team log. The folder picker opens where the timesheet is saved. Click Select folder, then Edit files. You do this once per timesheet.
 
-## 3. The screen
+## 4. The screen
 
 | Area | What it is for |
 |---|---|
@@ -28,7 +44,7 @@ This edition opens timesheets saved on your computer or in a OneDrive folder syn
 | Team log | Everyone's entries for this timesheet, with Refresh and Add selected to timesheet. |
 | Latest rows in the file | The last rows in the timesheet, with the bin icon to delete one. |
 
-## 4. Tracking time
+## 5. Tracking time
 
 1. Pick an Activity tag, for example Content Planning. The app shows how it is written, for example RAWCS Content Planning.
 2. Describe the Activity, for example Drafted November posts.
@@ -38,7 +54,7 @@ This edition opens timesheets saved on your computer or in a OneDrive folder syn
 
 Forgot to start or stop? Edit the date (DD/MM/YYYY) and times (24 hour, Perth time) in Sessions to add, or use + Manual entry.
 
-## 5. Saving your hours
+## 6. Saving your hours
 
 | Button | What happens |
 |---|---|
@@ -48,7 +64,7 @@ Forgot to start or stop? Edit the date (DD/MM/YYYY) and times (24 hour, Perth ti
 
 If the timesheet cannot be saved (for example it is open in Excel), your work is already in your team log as Not added yet. Add it from the Team log later.
 
-## 6. Working with colleagues
+## 7. Working with colleagues
 
 1. Click Refresh to load the latest timesheet and everyone's entries. The button flashes "Refresh: new updates" when the app sees changes (it checks every minute).
 2. Filter by person or status.
@@ -63,7 +79,7 @@ If the timesheet cannot be saved (for example it is open in Excel), your work is
 
 When two people are likely to save at the same time, use Save to team log only and let one person add everything from the Team log, for example at the end of the day.
 
-## 7. Managing the timesheet
+## 8. Managing the timesheet
 
 | Tool | How to use it |
 |---|---|
@@ -73,18 +89,19 @@ When two people are likely to save at the same time, use Save to team log only a
 | Undo | Puts the timesheet back exactly as it was before your last change (last 10 changes). Warns you if a colleague saved since. |
 | New timesheet | Creates a blank Brainbox timesheet for a new client. |
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 | Problem | What to do |
 |---|---|
 | "Could not save" or "SharePoint is holding it" | Close the timesheet in Excel and click the button again. Nothing was changed. |
 | Not enough blank rows | Use Insert rows. The number needed is filled in for you. |
+| "No timesheet found in this file" | The header row needs a Total Hours (or Hours) column and an Activities or Project Description column. Check the labels in the header row. |
 | "Not the folder that holds" message | In the folder picker, choose the folder the timesheet is saved in. |
 | Possible OneDrive conflict copy | OneDrive saved two versions. Open the copy in Excel, check for rows that are missing from the main file, then add them from the Team log. |
 | Name already used | Choose Yes only if that log is yours from another computer. Otherwise add a surname or initial. |
 | A colleague's entries are not showing | Click Refresh. Their OneDrive may still be syncing. |
 
-## 9. Good practice
+## 10. Good practice
 
 - Save your name once per browser and check the client tag when you open a new timesheet.
 - Click Refresh before adding colleagues' entries.

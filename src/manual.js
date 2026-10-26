@@ -17,7 +17,24 @@ export function manual(edition) {
         ],
       },
       {
-        h: '2. First-time setup (about 2 minutes)',
+        h: '2. Timesheet layouts the tracker reads',
+        blocks: [
+          { p: 'The tracker finds the header row by its labels, so columns can be in any order and other Brainbox layouts work too (for example RAWCS and Weld East).' },
+          { table: [
+            ['Column', 'Labels it recognises', 'What the tracker writes'],
+            ['Month', 'Month', 'Month name, on the first row of each day'],
+            ['Date', 'Date Log, Date', 'Date (DD/MM/YYYY), on the first row of each day'],
+            ['Day (optional)', 'Day, Weekday', 'Weekday name with the date. A Day formula is left to work it out.'],
+            ['Tag', 'Project Description, Activity Tag, Category, Project, Service', 'Client tag and activity tag, for example RAWCS Content Planning'],
+            ['Activity', 'Activities, Task, Tasks, Description, Details', 'What you did'],
+            ['Hours (required)', 'Total Hours, Hours, Hrs, Time Spent, Duration', 'Decimal hours'],
+            ['Notes (optional)', 'EOD Log, Notes, Comments, Remarks', 'Left blank for you'],
+          ] },
+          { p: 'The Total Hours row is found by its label (Total Hours, Total) or by the SUM formula under the hours column. Weekday names typed into blank rows in advance are ignored when counting blank rows. Tables, notes and summaries below Total Hours (such as Projects Summary) move down when rows are inserted.' },
+        ],
+      },
+      {
+        h: '3. First-time setup (about 2 minutes)',
         blocks: [
           { steps: m365 ? [
             'Open the tracker link in Chrome or Edge.',
@@ -35,7 +52,7 @@ export function manual(edition) {
         ],
       },
       {
-        h: '3. The screen',
+        h: '4. The screen',
         blocks: [
           { table: [
             ['Area', 'What it is for'],
@@ -50,7 +67,7 @@ export function manual(edition) {
         ],
       },
       {
-        h: '4. Tracking time',
+        h: '5. Tracking time',
         blocks: [
           { steps: [
             'Pick an Activity tag, for example Content Planning. The app shows how it is written, for example RAWCS Content Planning.',
@@ -63,7 +80,7 @@ export function manual(edition) {
         ],
       },
       {
-        h: '5. Saving your hours',
+        h: '6. Saving your hours',
         blocks: [
           { table: [
             ['Button', 'What happens'],
@@ -75,7 +92,7 @@ export function manual(edition) {
         ],
       },
       {
-        h: '6. Working with colleagues',
+        h: '7. Working with colleagues',
         blocks: [
           { steps: [
             'Click Refresh to load the latest timesheet and everyone\'s entries. The button flashes "Refresh: new updates" when the app sees changes (it checks every minute).',
@@ -95,7 +112,7 @@ export function manual(edition) {
         ],
       },
       {
-        h: '7. Managing the timesheet',
+        h: '8. Managing the timesheet',
         blocks: [
           { table: [
             ['Tool', 'How to use it'],
@@ -108,12 +125,13 @@ export function manual(edition) {
         ],
       },
       {
-        h: '8. Troubleshooting',
+        h: '9. Troubleshooting',
         blocks: [
           { table: [
             ['Problem', 'What to do'],
             ['"Could not save" or "SharePoint is holding it"', 'Close the timesheet in Excel and click the button again. Nothing was changed.'],
             ['Not enough blank rows', 'Use Insert rows. The number needed is filled in for you.'],
+            ['"No timesheet found in this file"', 'The header row needs a Total Hours (or Hours) column and an Activities or Project Description column. Check the labels in the header row.'],
             [m365 ? 'Cannot open the link' : '"Not the folder that holds" message', m365 ? 'Use Copy link in SharePoint or OneDrive, not the address bar of Excel for the web.' : 'In the folder picker, choose the folder the timesheet is saved in.'],
             ...(m365 ? [] : [['Possible OneDrive conflict copy', 'OneDrive saved two versions. Open the copy in Excel, check for rows that are missing from the main file, then add them from the Team log.']]),
             ['Name already used', 'Choose Yes only if that log is yours from another computer. Otherwise add a surname or initial.'],
@@ -122,7 +140,7 @@ export function manual(edition) {
         ],
       },
       {
-        h: '9. Good practice',
+        h: '10. Good practice',
         blocks: [
           { list: [
             'Save your name once per browser and check the client tag when you open a new timesheet.',
